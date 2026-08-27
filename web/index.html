@@ -1,0 +1,640 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>코스피 수급 지도</title>
+<meta name="description" content="코스피 테마별 수급과 테마 간 자금 이동을 매일 정리하는 대시보드">
+<meta name="theme-color" content="#f7f7f5">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="수급지도">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+/* ── 팔레트 ───────────────────────────────────────────────
+   한국 시장 관행에 맞춰 상승·순매수 = 빨강, 하락·순매도 = 파랑.
+   두 색은 검증된 diverging 쌍(blue ↔ red)이고 중립은 회색이다. */
+:root {
+  color-scheme: light;
+  --ground:      #f6f6f4;
+  --surface:     #ffffff;
+  --surface-2:   #fbfbfa;
+  --line:        #e4e5e9;
+  --line-soft:   #eeeef1;
+  --ink:         #16181d;
+  --ink-2:       #545a68;
+  --ink-3:       #8b91a1;
+  --up:          #d03b3b;
+  --up-soft:     #fbeaea;
+  --down:        #2a78d6;
+  --down-soft:   #e7f0fc;
+  --mid:         #dedee2;
+  --accent:      #2f3446;
+  --shadow:      0 1px 2px rgba(20,22,28,.05), 0 8px 24px -18px rgba(20,22,28,.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground:    #131416;
+    --surface:   #1c1e22;
+    --surface-2: #232529;
+    --line:      #2e3138;
+    --line-soft: #26292f;
+    --ink:       #f2f3f5;
+    --ink-2:     #a8aebc;
+    --ink-3:     #767d8c;
+    --up:        #e66767;
+    --up-soft:   #3a2224;
+    --down:      #3987e5;
+    --down-soft: #17273c;
+    --mid:       #383a40;
+    --accent:    #cfd4e2;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:    #131416;
+  --surface:   #1c1e22;
+  --surface-2: #232529;
+  --line:      #2e3138;
+  --line-soft: #26292f;
+  --ink:       #f2f3f5;
+  --ink-2:     #a8aebc;
+  --ink-3:     #767d8c;
+  --up:        #e66767;
+  --up-soft:   #3a2224;
+  --down:      #3987e5;
+  --down-soft: #17273c;
+  --mid:       #383a40;
+  --accent:    #cfd4e2;
+  --shadow:    0 1px 2px rgba(0,0,0,.4), 0 8px 24px -18px rgba(0,0,0,.8);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: "IBM Plex Sans KR", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
+}
+.num { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+.wrap { max-width: 520px; margin: 0 auto; padding: 0 14px calc(28px + env(safe-area-inset-bottom)); }
+
+/* ── 헤더 ───────────────────────────────────────────── */
+header {
+  position: sticky; top: 0; z-index: 20;
+  background: color-mix(in srgb, var(--ground) 88%, transparent);
+  backdrop-filter: saturate(150%) blur(12px);
+  border-bottom: 1px solid var(--line);
+  padding-top: env(safe-area-inset-top);
+}
+.head-in { max-width: 520px; margin: 0 auto; padding: 11px 14px 9px; display: flex; align-items: baseline; gap: 9px; }
+.brand { font-weight: 700; font-size: 16px; letter-spacing: -.01em; }
+.head-date { font-size: 12.5px; color: var(--ink-2); margin-left: auto; }
+.badge {
+  font-size: 10.5px; font-weight: 600; letter-spacing: .04em;
+  padding: 2px 7px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--ink-2); background: var(--surface);
+  white-space: nowrap;
+}
+.badge.final { color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, var(--line)); background: var(--up-soft); }
+
+nav.tabs {
+  max-width: 520px; margin: 0 auto; padding: 0 8px 8px;
+  display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
+}
+nav.tabs::-webkit-scrollbar { display: none; }
+nav.tabs button {
+  flex: 0 0 auto; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 13.5px; font-weight: 500; color: var(--ink-3);
+  padding: 6px 11px; border-radius: 8px; white-space: nowrap;
+}
+nav.tabs button[aria-selected="true"] { color: var(--ink); background: var(--surface); box-shadow: var(--shadow); font-weight: 600; }
+nav.tabs button:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+
+/* ── 카드 ───────────────────────────────────────────── */
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; padding: 14px; margin-top: 12px; box-shadow: var(--shadow);
+}
+.card > h2 {
+  margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: .01em;
+  color: var(--ink); display: flex; align-items: center; gap: 8px;
+}
+.card > .sub { margin: 0 0 12px; font-size: 11.5px; color: var(--ink-3); line-height: 1.45; }
+.card > h2 + .list, .card > h2 + .grid, .card > h2 + .flowlist { margin-top: 12px; }
+
+/* ── 헤드라인 ────────────────────────────────────────── */
+.headline { display: flex; flex-direction: column; gap: 7px; }
+.headline li { list-style: none; font-size: 14px; line-height: 1.45; color: var(--ink); display: flex; gap: 8px; }
+.headline li::before { content: ""; flex: 0 0 3px; border-radius: 2px; background: var(--mid); align-self: stretch; }
+.headline li:first-child::before { background: var(--accent); }
+ul.headline { margin: 0; padding: 0; }
+
+/* ── 지수 타일 ───────────────────────────────────────── */
+.idx { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.idx .tile { border: 1px solid var(--line-soft); border-radius: 11px; padding: 11px 12px; background: var(--surface-2); }
+.idx .name { font-size: 11.5px; color: var(--ink-2); font-weight: 500; }
+.idx .val { font-size: 23px; font-weight: 600; letter-spacing: -.02em; margin-top: 1px; }
+.idx .chg { font-size: 12.5px; font-weight: 500; margin-top: 1px; }
+.idx .adline { display: flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 10.5px; color: var(--ink-3); }
+.idx .adbar { flex: 1; height: 4px; border-radius: 2px; background: var(--mid); overflow: hidden; display: flex; }
+.idx .adbar i { display: block; height: 100%; }
+
+.pos { color: var(--up); }
+.neg { color: var(--down); }
+.zero { color: var(--ink-3); }
+
+/* ── 투자자 3인방 ────────────────────────────────────── */
+.inv { display: flex; flex-direction: column; gap: 9px; }
+.inv .row { display: grid; grid-template-columns: 52px 1fr 84px; align-items: center; gap: 9px; }
+.inv .who { font-size: 12.5px; color: var(--ink-2); font-weight: 500; }
+.inv .amt { text-align: right; font-size: 13px; font-weight: 600; }
+
+/* 0을 가운데 두는 발산형 막대 */
+.dv { position: relative; height: 16px; }
+.dv .axis { position: absolute; left: 50%; top: -1px; bottom: -1px; width: 1px; background: var(--line); }
+.dv i {
+  position: absolute; top: 2px; height: 12px; min-width: 3px;
+  background: var(--down);
+}
+.dv i.p { left: 50%; background: var(--up); border-radius: 0 4px 4px 0; }
+.dv i.n { right: 50%; border-radius: 4px 0 0 4px; }
+
+/* 한쪽 방향 크기 막대 */
+.mg { height: 6px; border-radius: 3px; background: var(--line-soft); overflow: hidden; }
+.mg i { display: block; height: 100%; border-radius: 3px; min-width: 3px; }
+
+/* ── 테마 랭킹 ───────────────────────────────────────── */
+.list { display: flex; flex-direction: column; }
+.trow { border-top: 1px solid var(--line-soft); }
+.trow:first-child { border-top: 0; }
+.trow > button {
+  width: 100%; border: 0; background: none; font: inherit; color: inherit;
+  cursor: pointer; text-align: left; padding: 9px 0;
+  display: grid; grid-template-columns: 1fr; gap: 5px;
+}
+.trow > button:focus-visible { outline: 2px solid var(--down); outline-offset: -2px; border-radius: 6px; }
+.trow .l1 { display: flex; align-items: baseline; gap: 7px; }
+.trow .tname { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
+.trow .amt { margin-left: auto; font-size: 13.5px; font-weight: 600; }
+.trow .meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ink-3); flex-wrap: wrap; }
+.chip {
+  font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px;
+  background: var(--surface-2); border: 1px solid var(--line-soft); color: var(--ink-2);
+}
+.chip.hot { color: var(--up); background: var(--up-soft); border-color: color-mix(in srgb, var(--up) 30%, var(--line-soft)); }
+.chip.cold { color: var(--down); background: var(--down-soft); border-color: color-mix(in srgb, var(--down) 30%, var(--line-soft)); }
+
+.members { display: none; padding: 2px 0 11px; }
+.trow[data-open="1"] .members { display: block; }
+.members table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.members th { text-align: right; font-weight: 500; color: var(--ink-3); font-size: 10.5px; padding: 3px 0; }
+.members th:first-child { text-align: left; }
+.members td { padding: 4px 0; border-top: 1px solid var(--line-soft); text-align: right; }
+.members td:first-child { text-align: left; color: var(--ink); }
+.members .sc { color: var(--ink-3); font-size: 10.5px; margin-left: 4px; }
+.caret { color: var(--ink-3); font-size: 11px; transition: transform .16s ease; display: inline-block; }
+.trow[data-open="1"] .caret { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .caret { transition: none; } }
+
+/* ── 자금 이동 ───────────────────────────────────────── */
+.flowlist { display: flex; flex-direction: column; gap: 10px; }
+.flow { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
+.flow .pair { display: flex; align-items: center; gap: 7px; font-size: 13.5px; min-width: 0; }
+.flow .from { color: var(--down); font-weight: 600; }
+.flow .to { color: var(--up); font-weight: 600; }
+.flow .arw { color: var(--ink-3); flex: 0 0 auto; }
+.flow .amt { font-size: 13px; font-weight: 600; color: var(--ink); }
+.flow .track { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--mid); overflow: hidden; }
+.flow .track i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--down), var(--up)); }
+
+/* ── 업종 히트맵 ─────────────────────────────────────── */
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.cell {
+  border: 1px solid var(--line-soft); border-radius: 9px; padding: 8px 8px 7px;
+  min-height: 58px; display: flex; flex-direction: column; justify-content: space-between;
+}
+.cell .cn { font-size: 11px; font-weight: 500; line-height: 1.25; }
+.cell .cv { font-size: 13.5px; font-weight: 600; }
+
+/* ── 종목 리스트 ─────────────────────────────────────── */
+.srow { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
+.srow:first-child { border-top: 0; }
+.srow .sn { font-size: 13.5px; font-weight: 600; letter-spacing: -.01em; }
+.srow .sa { font-size: 13px; font-weight: 600; text-align: right; }
+.srow .sm { font-size: 10.5px; color: var(--ink-3); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.srow .sd { font-size: 10.5px; text-align: right; }
+.split { grid-column: 1 / -1; display: flex; height: 4px; border-radius: 2px; overflow: hidden; background: var(--mid); margin-top: 3px; gap: 2px; }
+.split i { display: block; height: 100%; border-radius: 2px; }
+
+/* ── 기타 ───────────────────────────────────────────── */
+.legend { display: flex; gap: 12px; font-size: 10.5px; color: var(--ink-3); margin-top: 10px; flex-wrap: wrap; }
+.legend span { display: inline-flex; align-items: center; gap: 4px; }
+.legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+.note { font-size: 11px; color: var(--ink-3); line-height: 1.5; margin-top: 10px; }
+.empty { font-size: 12.5px; color: var(--ink-3); padding: 14px 0; text-align: center; }
+.panel { display: none; }
+.panel.on { display: block; }
+footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 1.6; text-align: center; }
+.tablebtn {
+  margin-top: 10px; font: inherit; font-size: 11.5px; color: var(--ink-2);
+  background: none; border: 1px solid var(--line); border-radius: 7px;
+  padding: 4px 9px; cursor: pointer;
+}
+.tablebtn:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+.tablewrap { overflow-x: auto; margin-top: 10px; display: none; }
+.tablewrap.on { display: block; }
+.tablewrap table { width: 100%; min-width: 420px; border-collapse: collapse; font-size: 11.5px; }
+.tablewrap th, .tablewrap td { padding: 5px 8px; border-bottom: 1px solid var(--line-soft); text-align: right; white-space: nowrap; }
+.tablewrap th { color: var(--ink-3); font-weight: 500; text-align: right; }
+.tablewrap th:first-child, .tablewrap td:first-child { text-align: left; }
+.loading { padding: 60px 0; text-align: center; color: var(--ink-3); font-size: 13px; }
+</style>
+</head>
+<body>
+<header>
+  <div class="head-in">
+    <span class="brand">코스피 수급 지도</span>
+    <span class="badge" id="stage">—</span>
+    <span class="head-date num" id="date">—</span>
+  </div>
+  <nav class="tabs" id="tabs" role="tablist">
+    <button role="tab" aria-selected="true" data-panel="p-sum">요약</button>
+    <button role="tab" aria-selected="false" data-panel="p-theme">테마 수급</button>
+    <button role="tab" aria-selected="false" data-panel="p-move">자금 이동</button>
+    <button role="tab" aria-selected="false" data-panel="p-stock">종목</button>
+    <button role="tab" aria-selected="false" data-panel="p-sector">업종</button>
+  </nav>
+</header>
+
+<main class="wrap" id="main">
+  <div class="loading" id="loading">불러오는 중…</div>
+</main>
+
+<script id="bootstrap" type="application/json">null</script>
+<script>
+(function () {
+  "use strict";
+
+  /* ── 숫자 표기 ─────────────────────────────────────── */
+  function eok(v) {
+    if (v === null || v === undefined || isNaN(v)) return "—";
+    var s = v > 0 ? "+" : v < 0 ? "−" : "";
+    var a = Math.abs(v);
+    if (a >= 10000) return s + (a / 10000).toFixed(2) + "조";
+    if (a >= 1000)  return s + Math.round(a).toLocaleString("ko-KR") + "억";
+    return s + (a >= 100 ? Math.round(a) : a.toFixed(0)) + "억";
+  }
+  function pct(v) {
+    if (v === null || v === undefined || isNaN(v)) return "—";
+    return (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(2) + "%";
+  }
+  function cls(v) { return v > 0 ? "pos" : v < 0 ? "neg" : "zero"; }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function el(html) {
+    var t = document.createElement("template");
+    t.innerHTML = html.trim();
+    return t.content.firstElementChild;
+  }
+
+  /* 0을 가운데 두는 발산형 막대. max 는 좌우 공통 스케일. */
+  function divergBar(value, max) {
+    var w = max > 0 ? Math.min(50, (Math.abs(value) / max) * 50) : 0;
+    var side = value >= 0 ? "p" : "n";
+    return '<div class="dv"><span class="axis"></span>' +
+           '<i class="' + side + '" style="width:' + w.toFixed(2) + '%"></i></div>';
+  }
+
+  /* 한쪽 방향 크기 막대. 부호로 색만 갈린다 (같은 부호끼리 비교하는 목록용) */
+  function magBar(value, max) {
+    var w = max > 0 ? Math.min(100, (Math.abs(value) / max) * 100) : 0;
+    var c = value >= 0 ? "var(--up)" : "var(--down)";
+    return '<div class="mg"><i style="width:' + w.toFixed(2) + '%;background:' + c + '"></i></div>';
+  }
+
+  /* 등락률 → 발산형 색 (빨강 ↔ 회색 ↔ 파랑) */
+  function heatStyle(v, span) {
+    var t = Math.max(-1, Math.min(1, span > 0 ? v / span : 0));
+    var a = Math.abs(t);
+    var alpha = (0.09 + a * 0.55).toFixed(3);
+    var color = t >= 0 ? "var(--up)" : "var(--down)";
+    return "background: color-mix(in srgb, " + color + " " + (alpha * 100).toFixed(0) +
+           "%, var(--surface)); border-color: color-mix(in srgb, " + color + " " +
+           ((alpha * 100) * 0.5).toFixed(0) + "%, var(--line-soft));";
+  }
+
+  /* ── 렌더 ─────────────────────────────────────────── */
+  function render(d) {
+    document.getElementById("date").textContent = d.date;
+    var stage = document.getElementById("stage");
+    stage.textContent = d.stage === "final" ? "수급 확정" : "장마감 속보";
+    stage.className = "badge" + (d.stage === "final" ? " final" : "");
+
+    var main = document.getElementById("main");
+    main.innerHTML =
+      panelSummary(d) + panelTheme(d) + panelMove(d) + panelStock(d) + panelSector(d) +
+      '<footer>테마 분류: ' + esc(d.theme_source || "—") + '<br>' +
+      '수집 ' + esc((d.collected_at || "").replace("T", " ").slice(0, 16)) + ' · ' +
+      '투자 판단의 근거로 쓰기 전에 원 데이터를 확인하세요.</footer>';
+
+    wire();
+  }
+
+  /* ── 1. 요약 ──────────────────────────────────────── */
+  function panelSummary(d) {
+    var h = '<section class="panel on" id="p-sum">';
+
+    h += '<div class="card"><ul class="headline">' +
+         (d.headline || []).map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") +
+         '</ul></div>';
+
+    if (d.indices && d.indices.length) {
+      h += '<div class="card"><h2>지수</h2><div class="idx">';
+      d.indices.forEach(function (i) {
+        var tot = (i.up + i.down + i.flat) || 1;
+        h += '<div class="tile">' +
+             '<div class="name">' + esc(i.name) + '</div>' +
+             '<div class="val num">' + i.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</div>' +
+             '<div class="chg num ' + cls(i.chg_pct) + '">' + (i.chg_pct > 0 ? "▲" : i.chg_pct < 0 ? "▼" : "―") +
+             ' ' + Math.abs(i.change).toFixed(2) + ' (' + pct(i.chg_pct) + ')</div>' +
+             '<div class="adline"><span class="num pos">' + i.up + '</span>' +
+             '<span class="adbar">' +
+             '<i style="width:' + (i.up / tot * 100).toFixed(1) + '%;background:var(--up)"></i>' +
+             '<i style="width:' + (i.flat / tot * 100).toFixed(1) + '%;background:var(--mid)"></i>' +
+             '<i style="width:' + (i.down / tot * 100).toFixed(1) + '%;background:var(--down)"></i>' +
+             '</span><span class="num neg">' + i.down + '</span></div>' +
+             '</div>';
+      });
+      h += '</div></div>';
+    }
+
+    var iv = d.investors || {};
+    var retail = iv.retail_eok !== null && iv.retail_eok !== undefined ? iv.retail_eok : iv.retail_proxy_eok;
+    var rows = [
+      ["외국인", iv.foreign_eok, ""],
+      ["기관", iv.institution_eok, ""],
+      ["개인", retail, iv.retail_estimated ? "추정" : ""]
+    ];
+    var mx = Math.max.apply(null, rows.map(function (r) { return Math.abs(r[1] || 0); }).concat([1]));
+    h += '<div class="card"><h2>투자자별 순매수</h2>' +
+         '<p class="sub">집계된 종목 기준 합계' +
+         (iv.retail_estimated ? ' · 개인은 외국인+기관의 반대편으로 추정한 값입니다.' : '') + '</p>' +
+         '<div class="inv">';
+    rows.forEach(function (r) {
+      h += '<div class="row"><span class="who">' + r[0] +
+           (r[2] ? ' <span class="chip">' + r[2] + '</span>' : '') + '</span>' +
+           divergBar(r[1] || 0, mx) +
+           '<span class="amt num ' + cls(r[1]) + '">' + eok(r[1]) + '</span></div>';
+    });
+    h += '</div><div class="legend">' +
+         '<span><i style="background:var(--up)"></i>순매수 · 상승</span>' +
+         '<span><i style="background:var(--down)"></i>순매도 · 하락</span></div></div>';
+
+    return h + "</section>";
+  }
+
+  /* ── 2. 테마 수급 ─────────────────────────────────── */
+  function themeRows(list, max) {
+    return list.map(function (t) {
+      var streak = t.streak || 0;
+      var chips = "";
+      if (Math.abs(streak) >= 2) {
+        chips += '<span class="chip ' + (streak > 0 ? "hot" : "cold") + '">' +
+                 Math.abs(streak) + '일 연속 ' + (streak > 0 ? "순매수" : "순매도") + '</span>';
+      }
+      if (t.breadth >= 0.8) chips += '<span class="chip">참여 폭 넓음</span>';
+      else if (t.breadth <= 0.3) chips += '<span class="chip">일부 종목 주도</span>';
+
+      var body = '<tr><th>종목</th><th>순매수</th><th>외국인</th><th>기관</th></tr>' +
+        (t.stocks || []).map(function (s) {
+          return '<tr><td>' + esc(s.name) +
+                 '<span class="sc num ' + cls(s.chg_pct) + '">' + pct(s.chg_pct) + '</span></td>' +
+                 '<td class="num ' + cls(s.net_eok) + '">' + eok(s.net_eok) + '</td>' +
+                 '<td class="num ' + cls(s.foreign_eok) + '">' + eok(s.foreign_eok) + '</td>' +
+                 '<td class="num ' + cls(s.institution_eok) + '">' + eok(s.institution_eok) + '</td></tr>';
+        }).join("");
+
+      return '<div class="trow" data-open="0">' +
+        '<button type="button" aria-expanded="false">' +
+          '<span class="l1"><span class="caret">▸</span>' +
+          '<span class="tname">' + esc(t.name) + '</span>' +
+          '<span class="amt num ' + cls(t.net_eok) + '">' + eok(t.net_eok) + '</span></span>' +
+          magBar(t.net_eok, max) +
+          '<span class="meta"><span class="num ' + cls(t.avg_chg_pct) + '">평균 ' + pct(t.avg_chg_pct) + '</span>' +
+          '<span>·</span><span class="num">' + t.members_with_data + '/' + t.members_total + '종목</span>' +
+          chips + '</span>' +
+        '</button>' +
+        '<div class="members"><table>' + body + '</table></div>' +
+      '</div>';
+    }).join("");
+  }
+
+  function panelTheme(d) {
+    var top = d.themes_top || [], bot = d.themes_bottom || [];
+    var max = Math.max.apply(null,
+      top.concat(bot).map(function (t) { return Math.abs(t.net_eok); }).concat([1]));
+
+    var h = '<section class="panel" id="p-theme">';
+    h += '<div class="card"><h2>자금이 들어온 테마</h2>' +
+         '<p class="sub">외국인 + 기관 순매수 대금 합계. 테마명을 누르면 구성 종목이 열립니다.</p>' +
+         '<div class="list">' + (top.length ? themeRows(top, max) : '<div class="empty">데이터 없음</div>') + '</div>' +
+         '<button class="tablebtn" data-table="tbl-theme">표로 보기</button>' +
+         '<div class="tablewrap" id="tbl-theme">' + themeTable(top.concat(bot)) + '</div>' +
+         '</div>';
+    h += '<div class="card"><h2>자금이 빠져나간 테마</h2>' +
+         '<div class="list">' + (bot.length ? themeRows(bot, max) : '<div class="empty">데이터 없음</div>') + '</div></div>';
+    return h + "</section>";
+  }
+
+  function themeTable(rows) {
+    return '<table><thead><tr><th>테마</th><th>순매수(억)</th><th>외국인</th><th>기관</th>' +
+      '<th>평균등락</th><th>종목</th></tr></thead><tbody>' +
+      rows.map(function (t) {
+        return '<tr><td>' + esc(t.name) + '</td>' +
+          '<td class="num">' + t.net_eok.toLocaleString("ko-KR") + '</td>' +
+          '<td class="num">' + t.foreign_eok.toLocaleString("ko-KR") + '</td>' +
+          '<td class="num">' + t.institution_eok.toLocaleString("ko-KR") + '</td>' +
+          '<td class="num">' + t.avg_chg_pct.toFixed(2) + '</td>' +
+          '<td class="num">' + t.members_with_data + '/' + t.members_total + '</td></tr>';
+      }).join("") + '</tbody></table>';
+  }
+
+  /* ── 3. 자금 이동 ─────────────────────────────────── */
+  function panelMove(d) {
+    var r = d.rotation || {};
+    var h = '<section class="panel" id="p-move">';
+
+    if (!r.available || !(r.pairs || []).length) {
+      h += '<div class="card"><h2>테마 간 자금 이동</h2>' +
+           '<div class="empty">비교할 전 거래일 리포트가 아직 없습니다.<br>' +
+           '이틀째부터 이동 경로가 표시됩니다.</div></div>';
+      return h + "</section>";
+    }
+
+    var mx = Math.max.apply(null, r.pairs.map(function (p) { return p.amount_eok; }).concat([1]));
+    h += '<div class="card"><h2>어제 → 오늘, 돈이 옮겨간 경로</h2>' +
+         '<p class="sub">' + esc(r.note || "") + '</p><div class="flowlist">';
+    r.pairs.forEach(function (p) {
+      h += '<div class="flow">' +
+        '<span class="pair"><span class="from">' + esc(p.from) + '</span>' +
+        '<span class="arw">→</span><span class="to">' + esc(p.to) + '</span></span>' +
+        '<span class="amt num">' + eok(p.amount_eok) + '</span>' +
+        '<span class="track"><i style="width:' + (p.amount_eok / mx * 100).toFixed(1) + '%"></i></span>' +
+        '</div>';
+    });
+    h += '</div></div>';
+
+    function deltaCard(title, rows, sub) {
+      if (!rows.length) return "";
+      var m = Math.max.apply(null, rows.map(function (x) { return Math.abs(x.delta_eok); }).concat([1]));
+      var s = '<div class="card"><h2>' + title + '</h2><p class="sub">' + sub + '</p><div class="list">';
+      rows.forEach(function (x) {
+        s += '<div class="trow"><div style="padding:9px 0;display:grid;gap:5px">' +
+          '<span class="l1"><span class="tname">' + esc(x.name) + '</span>' +
+          '<span class="amt num ' + cls(x.delta_eok) + '">' + eok(x.delta_eok) + '</span></span>' +
+          magBar(x.delta_eok, m) +
+          '<span class="meta">어제 <span class="num">' + eok(x.prev_eok) + '</span>' +
+          ' <span>→</span> 오늘 <span class="num">' + eok(x.today_eok) + '</span></span>' +
+          '</div></div>';
+      });
+      return s + '</div></div>';
+    }
+
+    h += deltaCard("유입이 늘어난 테마", r.inflow || [], "전 거래일 대비 순매수 증가폭");
+    h += deltaCard("유입이 줄어든 테마", r.outflow || [], "전 거래일 대비 순매수 감소폭");
+    return h + "</section>";
+  }
+
+  /* ── 4. 종목 ──────────────────────────────────────── */
+  function stockRows(rows) {
+    if (!rows.length) return '<div class="empty">데이터 없음</div>';
+    return rows.map(function (s) {
+      var f = Math.abs(s.foreign_eok), o = Math.abs(s.institution_eok), tot = f + o || 1;
+      return '<div class="srow">' +
+        '<span class="sn">' + esc(s.name) + '</span>' +
+        '<span class="sa num ' + cls(s.net_eok) + '">' + eok(s.net_eok) + '</span>' +
+        '<span class="sm">' + (s.themes || []).map(function (t) { return '<span class="chip">' + esc(t) + '</span>'; }).join("") + '</span>' +
+        '<span class="sd num ' + cls(s.chg_pct) + '">' + pct(s.chg_pct) + '</span>' +
+        '<span class="split">' +
+          '<i style="width:' + (f / tot * 100).toFixed(1) + '%;background:' + (s.foreign_eok >= 0 ? "var(--up)" : "var(--down)") + '"></i>' +
+          '<i style="width:' + (o / tot * 100).toFixed(1) + '%;background:' + (s.institution_eok >= 0 ? "var(--up)" : "var(--down)") + ';opacity:.55"></i>' +
+        '</span></div>';
+    }).join("");
+  }
+
+  function panelStock(d) {
+    var h = '<section class="panel" id="p-stock">';
+    h += '<div class="card"><h2>순매수 상위</h2>' +
+         '<p class="sub">막대는 왼쪽이 외국인, 오른쪽(연한 쪽)이 기관 몫입니다.</p>' +
+         '<div class="list">' + stockRows(d.top_buy || []) + '</div></div>';
+    h += '<div class="card"><h2>순매도 상위</h2><div class="list">' +
+         stockRows(d.top_sell || []) + '</div></div>';
+
+    var sp = d.spikes || [];
+    h += '<div class="card"><h2>거래가 갑자기 몰린 종목</h2>' +
+         '<p class="sub">평소 거래량 대비 증가율 기준</p><div class="list">';
+    h += sp.length ? sp.map(function (s) {
+      return '<div class="srow">' +
+        '<span class="sn">' + esc(s.name) + '</span>' +
+        '<span class="sa num">' + s.amount_eok.toLocaleString("ko-KR") + '억</span>' +
+        '<span class="sm"><span class="chip hot">거래량 +' + s.vol_increase_pct.toFixed(0) + '%</span>' +
+        (s.themes || []).map(function (t) { return '<span class="chip">' + esc(t) + '</span>'; }).join("") + '</span>' +
+        '<span class="sd num ' + cls(s.chg_pct) + '">' + pct(s.chg_pct) + '</span></div>';
+    }).join("") : '<div class="empty">해당 종목 없음</div>';
+    h += '</div></div>';
+    return h + "</section>";
+  }
+
+  /* ── 5. 업종 ──────────────────────────────────────── */
+  function panelSector(d) {
+    var s = d.sectors || [];
+    var h = '<section class="panel" id="p-sector">';
+    if (!s.length) return h + '<div class="card"><div class="empty">업종 데이터 없음</div></div></section>';
+    var span = Math.max.apply(null, s.map(function (x) { return Math.abs(x.chg_pct); }).concat([0.5]));
+    h += '<div class="card"><h2>코스피 업종 등락</h2>' +
+         '<p class="sub">색이 진할수록 변동이 큽니다. 빨강 상승 / 파랑 하락.</p><div class="grid">';
+    s.forEach(function (x) {
+      h += '<div class="cell" style="' + heatStyle(x.chg_pct, span) + '">' +
+        '<span class="cn">' + esc(x.name) + '</span>' +
+        '<span class="cv num ' + cls(x.chg_pct) + '">' + pct(x.chg_pct) + '</span></div>';
+    });
+    h += '</div>' +
+      '<button class="tablebtn" data-table="tbl-sector">표로 보기</button>' +
+      '<div class="tablewrap" id="tbl-sector"><table><thead><tr><th>업종</th><th>등락률</th><th>거래대금 비중</th></tr></thead><tbody>' +
+      s.map(function (x) {
+        return '<tr><td>' + esc(x.name) + '</td><td class="num">' + x.chg_pct.toFixed(2) + '%</td>' +
+               '<td class="num">' + (x.amount_share || 0).toFixed(2) + '%</td></tr>';
+      }).join("") + '</tbody></table></div></div>';
+    return h + "</section>";
+  }
+
+  /* ── 이벤트 ───────────────────────────────────────── */
+  function wire() {
+    document.querySelectorAll(".trow > button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var row = b.parentElement;
+        var open = row.dataset.open === "1" ? "0" : "1";
+        row.dataset.open = open;
+        b.setAttribute("aria-expanded", open === "1" ? "true" : "false");
+      });
+    });
+    document.querySelectorAll(".tablebtn").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var t = document.getElementById(b.dataset.table);
+        var on = t.classList.toggle("on");
+        b.textContent = on ? "표 닫기" : "표로 보기";
+      });
+    });
+  }
+
+  document.getElementById("tabs").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-panel]");
+    if (!b) return;
+    this.querySelectorAll("button").forEach(function (x) {
+      x.setAttribute("aria-selected", x === b ? "true" : "false");
+    });
+    document.querySelectorAll(".panel").forEach(function (p) {
+      p.classList.toggle("on", p.id === b.dataset.panel);
+    });
+    window.scrollTo({ top: 0, behavior: "instant" });
+  });
+
+  /* ── 부트스트랩 ───────────────────────────────────── */
+  var boot = null;
+  try { boot = JSON.parse(document.getElementById("bootstrap").textContent); } catch (e) { boot = null; }
+
+  if (boot) {
+    render(boot);
+  } else {
+    fetch("data/latest.json?t=" + Date.now())
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(render)
+      .catch(function (err) {
+        document.getElementById("main").innerHTML =
+          '<div class="card"><h2>리포트를 불러오지 못했습니다</h2>' +
+          '<p class="sub">아직 첫 리포트가 생성되지 않았거나 네트워크 문제일 수 있습니다. ' +
+          '(' + esc(err.message) + ')</p></div>';
+      });
+  }
+
+  if ("serviceWorker" in navigator && location.protocol === "https:") {
+    navigator.serviceWorker.register("sw.js").catch(function () {});
+  }
+})();
+</script>
+</body>
+</html>
