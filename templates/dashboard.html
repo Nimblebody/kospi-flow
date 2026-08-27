@@ -1030,7 +1030,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     var rows = "";
     var wti = extra("wti");
     if (wti) rows += checkRow(wti.name, wti.value, wti.change, wti.chg_pct, wti.unit, wti.note);
-    if (ust10) rows += checkRow("미 10년물 국채금리", ust10.value, ust10.change, ust10.chg_pct, "yield", "");
+    if (ust10) rows += checkRow("미 10년물 국채금리", ust10.value, ust10.change, ust10.chg_pct, "yield", ust10.note || "");
     var btc = extra("btc");
     if (btc) rows += checkRow(btc.name, btc.value, btc.change, btc.chg_pct, btc.unit, btc.note);
     var dxy = extra("dxy");

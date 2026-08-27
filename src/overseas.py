@@ -26,23 +26,25 @@ log = logging.getLogger(__name__)
 CODE_CACHE = config.CACHE_DIR / "us_codes.json"
 
 # div: N=해외지수 X=환율 I=국채
+# 앞의 코드가 실제로 통하는 표기다 (2026-08-27 probe 로 확인). 뒤는 예비.
+# 다우만 점이 붙는다. 'DJI' 는 0행, '.DJI' 가 나온다.
 INDICES = [
-    {"key": "spx", "name": "S&P 500", "div": "N", "codes": ["SPX", ".SPX", "SPX500"]},
-    {"key": "comp", "name": "나스닥", "div": "N", "codes": ["COMP", ".IXIC", "IXIC"]},
-    {"key": "dji", "name": "다우", "div": "N", "codes": ["DJI", ".DJI", "INDU"]},
+    {"key": "spx", "name": "S&P 500", "div": "N", "codes": ["SPX", ".SPX"]},
+    {"key": "comp", "name": "나스닥", "div": "N", "codes": ["COMP", ".IXIC"]},
+    {"key": "dji", "name": "다우", "div": "N", "codes": [".DJI", "DJI", "INDU"]},
 ]
 
 MACRO = [
     {"key": "vix", "name": "VIX", "div": "N", "codes": ["VIX", ".VIX"], "unit": "pt"},
     {
         "key": "usdkrw", "name": "원/달러", "div": "X",
-        "codes": ["FX@KRW", "KRW", "USDKRW"], "unit": "won",
-    },
-    {
-        "key": "ust10", "name": "미 10년물", "div": "I",
-        "codes": ["TNX", ".TNX", "US10YT", "TNX@US"], "unit": "yield",
+        "codes": ["FX@KRW", "KRW"], "unit": "won",
     },
 ]
+
+# 미 10년물은 KIS 국채 구분(I)에 TNX / .TNX / US10YT / TNX@US 어느 표기로도 안 잡힌다
+# (probe 에서 전부 0행). 야후 시세로 받는다.
+UST10 = {"key": "ust10", "name": "미 10년물", "unit": "yield", "yahoo": "^TNX"}
 
 # SPDR 섹터 11종 + 반도체(SMH). 반도체는 섹터가 아니라 업종 ETF 지만,
 # 코스피 수급이 가장 크게 따라 움직이는 자리라 같이 놓는다.
@@ -52,6 +54,9 @@ SECTORS = [
     ("XLV", "헬스케어"), ("XLI", "산업재"), ("XLB", "소재"),
     ("XLRE", "부동산"), ("XLU", "유틸리티"), ("SMH", "반도체"),
 ]
+
+# SPDR 11종은 AMS 에서 나오는데 SMH 만 나스닥이다 (probe 확인). 헛걸음 두 번을 줄인다.
+SECTOR_ON_NAS = {"SMH"}
 
 # 국내 투자자가 많이 보는 미국 종목. 시가총액 상위와 반도체·AI 축을 함께 담는다.
 # 코스피 반도체 수급이 간밤 이쪽을 따라가는 일이 잦아 그 자리를 두껍게 뒀다.
@@ -72,13 +77,13 @@ WATCH = [
 EXTRAS = [
     {
         "key": "wti", "name": "국제유가 (WTI)", "unit": "usd",
-        "pairs": [("S", "CL"), ("S", "WTI"), ("N", "WTI"), ("S", "CLc1"), ("S", "WTIc1")],
-        "proxy": ("USO", "USO ETF 로 대신"),
+        "pairs": [("S", "CL"), ("S", "WTI"), ("N", "WTI")],
+        "yahoo": "CL=F",
     },
     {
         "key": "dxy", "name": "달러지수", "unit": "pt",
-        "pairs": [("X", "DXY"), ("X", ".DXY"), ("X", "USDX"), ("N", "DXY"), ("N", ".DXY")],
-        "proxy": ("UUP", "UUP ETF 로 대신"),
+        "pairs": [("X", "DXY"), ("X", ".DXY"), ("N", "DXY")],
+        "yahoo": "DX-Y.NYB",
     },
 ]
 
@@ -137,7 +142,8 @@ def _move(rows: list[tuple[str, float]]) -> dict | None:
     return {
         "date": f"{date[:4]}-{date[4:6]}-{date[6:]}",
         "value": round(last, 2),
-        "change": round(last - prev, 2),
+        # 금리는 0.01%p 단위로 움직인다. 여기서 두 자리로 깎으면 변화가 0 이 된다.
+        "change": round(last - prev, 4),
         "chg_pct": round((last - prev) / prev * 100, 2),
     }
 
@@ -213,6 +219,38 @@ def _fetch_pairs(
                 codes[key] = tag
             return rows
     return []
+
+
+def _fetch_yahoo(symbol: str) -> list[tuple[str, float]]:
+    """KIS 가 안 주는 것만 야후에서 받는다 (미 10년물·WTI·달러지수).
+
+    키가 필요 없고 일봉 종가만 쓰므로 앞의 KIS 경로와 같은 모양으로 맞춰 돌려준다.
+    """
+    try:
+        r = requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+            params={"range": "10d", "interval": "1d"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        res = r.json()["chart"]["result"][0]
+        stamps = res["timestamp"]
+        closes = res["indicators"]["quote"][0]["close"]
+    except Exception as exc:
+        log.warning("야후 시세 실패 (%s): %s", symbol, exc)
+        return []
+
+    from datetime import datetime, timezone
+
+    rows = []
+    for ts, close in zip(stamps, closes):
+        if close is None:
+            continue
+        date = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y%m%d")
+        rows.append((date, float(close)))
+    rows.sort(key=lambda x: x[0], reverse=True)
+    return rows
 
 
 def _fetch_btc() -> dict | None:
@@ -292,14 +330,6 @@ def collect_us(kis: KisClient) -> dict:
         if not m:
             continue
         value, change = m["value"], m["change"]
-        if spec["unit"] == "yield":
-            y = _yield_value(value)
-            if y is None:
-                log.warning("미 10년물 값이 금리로 보이지 않습니다 (%s). 뺍니다.", value)
-                continue
-            scale = y / value if value else 1     # 42.8 -> 4.28 이면 0.1
-            change = round(change * scale, 3)     # %p
-            value = round(y, 2)
         out["macro"].append(
             {
                 "name": spec["name"],
@@ -310,8 +340,24 @@ def collect_us(kis: KisClient) -> dict:
             }
         )
 
+    m = _move(_fetch_yahoo(UST10["yahoo"]))
+    if m:
+        y = _yield_value(m["value"])
+        if y is None:
+            log.warning("미 10년물 값이 금리로 보이지 않습니다 (%s). 뺍니다.", m["value"])
+        else:
+            scale = y / m["value"] if m["value"] else 1
+            out["macro"].append(
+                {
+                    "name": UST10["name"], "value": round(y, 2),
+                    "change": round(m["change"] * scale, 3),   # %p
+                    "chg_pct": m["chg_pct"], "unit": "yield", "note": "야후 시세",
+                }
+            )
+
     for symbol, name in SECTORS:
-        m = _move(_fetch_stock(kis, symbol, codes))
+        order = STOCK_EXCHANGES if symbol in SECTOR_ON_NAS else EXCHANGES
+        m = _move(_fetch_stock(kis, symbol, codes, order))
         if not m:
             continue
         dates.append(m["date"])
@@ -331,10 +377,9 @@ def collect_us(kis: KisClient) -> dict:
     for spec in EXTRAS:
         rows = _fetch_pairs(kis, spec["key"], spec["pairs"], codes)
         note = ""
-        if not rows and spec.get("proxy"):
-            symbol, label = spec["proxy"]
-            rows = _fetch_stock(kis, symbol, codes, STOCK_EXCHANGES)
-            note = label
+        if not rows and spec.get("yahoo"):
+            rows = _fetch_yahoo(spec["yahoo"])
+            note = "야후 시세"
         m = _move(rows)
         if not m:
             log.warning("%s: 값을 못 가져왔습니다", spec["name"])
@@ -397,6 +442,13 @@ def probe(kis: KisClient) -> None:
             except Exception as exc:
                 note = f"{'—':>4}  실패: {str(exc)[:38]}"
             print(f"{spec['name']:<14} {div:<4} {code:<10} {note}")
+
+    for label, sym in (("미 10년물", UST10["yahoo"]),) + tuple(
+        (e["name"], e["yahoo"]) for e in EXTRAS if e.get("yahoo")
+    ):
+        rows = _fetch_yahoo(sym)
+        note = f"{len(rows):>4}  {rows[0][0] if rows else '—':<10} {rows[0][1] if rows else '':>10}"
+        print(f"{label:<14} {'야후':<4} {sym:<10} {note}")
 
     btc = _fetch_btc()
     print(f"{'비트코인':<14} {'—':<4} {'—':<10} {btc['value'] if btc else '실패'} ({btc['note'] if btc else ''})")
