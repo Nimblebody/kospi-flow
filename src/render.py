@@ -7,6 +7,7 @@ templates/dashboard.html 하나로 두 가지를 만든다.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -39,7 +40,9 @@ MANIFEST = {
 }
 
 SERVICE_WORKER = """// 앱 껍데기는 캐시해서 오프라인에서도 열리게, 데이터는 항상 네트워크 우선.
-const SHELL = 'kospi-flow-shell-v3';
+// 캐시 이름 뒤에 붙는 해시는 index.html 내용에서 뽑는다. 화면이 바뀌면 캐시 이름이
+// 통째로 바뀌므로 낡은 껍데기가 남아 새 UI 를 가리는 일이 없다.
+const SHELL = 'kospi-flow-shell-__VERSION__';
 const SHELL_FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png'];
 
 self.addEventListener('install', (e) => {
@@ -54,21 +57,25 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+function freshFirst(request) {
+  // 네트워크 우선, 성공하면 캐시 갱신, 실패하면 마지막으로 성공한 응답
+  return fetch(request)
+    .then((res) => {
+      const copy = res.clone();
+      caches.open(SHELL).then((c) => c.put(request, copy));
+      return res;
+    })
+    .catch(() => caches.match(request).then((hit) => hit || caches.match('./index.html')));
+}
+
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin) return;
 
-  // 리포트 JSON: 네트워크 우선, 실패하면 마지막으로 성공한 응답
-  if (url.pathname.includes('/data/')) {
-    e.respondWith(
-      fetch(e.request)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(SHELL).then((c) => c.put(e.request, copy));
-          return res;
-        })
-        .catch(() => caches.match(e.request))
-    );
+  // 리포트 JSON 과 화면 자체(HTML)는 네트워크 우선.
+  // HTML 을 캐시 우선으로 두면 배포해도 낡은 화면이 계속 뜬다.
+  if (url.pathname.includes('/data/') || e.request.mode === 'navigate' || url.pathname.endsWith('.html')) {
+    e.respondWith(freshFirst(e.request));
     return;
   }
 
@@ -139,7 +146,10 @@ def build_site(inline_report: dict | None = None) -> Path:
     (config.WEB_DIR / "manifest.webmanifest").write_text(
         json.dumps(MANIFEST, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    (config.WEB_DIR / "sw.js").write_text(SERVICE_WORKER, encoding="utf-8")
+    version = hashlib.sha256(html.encode("utf-8")).hexdigest()[:12]
+    (config.WEB_DIR / "sw.js").write_text(
+        SERVICE_WORKER.replace("__VERSION__", version), encoding="utf-8"
+    )
     (config.WEB_DIR / ".nojekyll").write_text("", encoding="utf-8")
 
     for size in (192, 512):

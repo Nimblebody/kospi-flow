@@ -105,6 +105,17 @@ header {
   border: 1px solid var(--line); border-radius: 6px; padding: 2px 5px;
 }
 .head-date select:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+.refresh {
+  align-self: center; flex: none; width: 26px; height: 26px; padding: 0;
+  font: inherit; font-size: 13px; line-height: 1; color: var(--ink-2);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
+  cursor: pointer; display: grid; place-items: center;
+}
+.refresh:disabled { cursor: default; color: var(--ink-3); }
+.refresh:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+.refresh.spin > span { display: block; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .refresh.spin > span { animation: none; } }
 /* 요약만 있는 과거 날짜에 붙는 안내 */
 .thin-note {
   margin: 0 0 11px; padding: 8px 10px; border-radius: 8px;
@@ -302,6 +313,7 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
     <span class="badge" id="stage">—</span>
     <span class="head-date num" id="date">—</span>
     <span class="head-date" id="datepick" hidden><select id="datesel" aria-label="날짜 선택"></select></span>
+    <button type="button" class="refresh" id="refresh" title="새로고침" aria-label="새로고침" hidden><span>↻</span></button>
   </div>
   <nav class="tabs" id="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-panel="p-sum">요약</button>
@@ -748,6 +760,51 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
   var boot = null;
   try { boot = JSON.parse(document.getElementById("bootstrap").textContent); } catch (e) { boot = null; }
 
+  /* ── 새로고침 ──────────────────────────────────────
+     지금 보고 있는 날짜를 다시 불러 그린다. 동시에 서비스워커도 확인해서
+     새 화면이 배포돼 있으면 controllerchange 에서 페이지를 다시 띄운다. */
+  var dataUrl = "data/latest.json";   // 새로고침이 다시 부를 주소
+  var busy = false;
+
+  function refresh() {
+    if (busy) return;
+    busy = true;
+    var btn = document.getElementById("refresh");
+    var icon = btn.firstElementChild;
+    btn.disabled = true;
+    btn.classList.add("spin");
+
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.getRegistration()
+        .then(function (r) { return r && r.update(); })
+        .catch(function () {});
+    }
+
+    fetch(dataUrl + "?t=" + Date.now(), { cache: "reload" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (d) {
+        var pick = document.getElementById("datesel").value;
+        render(d);
+        if (pick) {
+          document.getElementById("datepick").hidden = false;
+          document.getElementById("datesel").value = pick;
+        }
+        icon.textContent = "✓";
+      })
+      .catch(function () { icon.textContent = "!"; btn.title = "불러오지 못했습니다"; })
+      .then(function () {
+        btn.classList.remove("spin");
+        setTimeout(function () {
+          icon.textContent = "↻";
+          btn.title = "새로고침";
+          btn.disabled = false;
+          busy = false;
+        }, 1200);
+      });
+  }
+
+  document.getElementById("refresh").addEventListener("click", refresh);
+
   /* ── 날짜 선택 ─────────────────────────────────────
      index.json 의 dates 를 채워 넣고, 고르면 그날 리포트를 불러 다시 그린다.
      인라인 단일 HTML(build_standalone)에는 옆에 데이터 파일이 없으므로 띄우지 않는다. */
@@ -771,8 +828,8 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
 
         sel.addEventListener("change", function () {
           var pick = sel.value;
-          var url = (pick === dates[0] ? "data/latest.json" : "data/" + pick + ".json");
-          fetch(url + "?t=" + Date.now())
+          dataUrl = (pick === dates[0] ? "data/latest.json" : "data/" + pick + ".json");
+          fetch(dataUrl + "?t=" + Date.now())
             .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
             .then(function (d) {
               render(d);
@@ -794,7 +851,11 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
   } else {
     fetch("data/latest.json?t=" + Date.now())
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(function (d) { render(d); setupDatePicker(d.date); })
+      .then(function (d) {
+        render(d);
+        setupDatePicker(d.date);
+        document.getElementById("refresh").hidden = false;
+      })
       .catch(function (err) {
         document.getElementById("main").innerHTML =
           '<div class="card"><h2>리포트를 불러오지 못했습니다</h2>' +
@@ -804,6 +865,15 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
   }
 
   if ("serviceWorker" in navigator && location.protocol === "https:") {
+    // 이미 워커가 붙어 있던 페이지에서만 다시 띄운다. 첫 방문의 claim 까지
+    // 새로고침으로 받으면 열자마자 화면이 깜빡인다.
+    var hadWorker = !!navigator.serviceWorker.controller;
+    var reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      if (!hadWorker || reloaded) return;
+      reloaded = true;
+      location.reload();
+    });
     navigator.serviceWorker.register("sw.js").catch(function () {});
   }
 })();
