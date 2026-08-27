@@ -134,6 +134,23 @@ header {
   .head-meta { order: 2; width: 100%; margin-left: 0; justify-content: flex-end; }
 }
 
+/* ── 체크리스트 (눌러서 그래프) ── */
+.crow { border-top: 1px solid var(--line-soft); }
+.crow:first-child { border-top: 0; }
+.crow > button.srow {
+  width: 100%; border: 0; background: none; font: inherit; color: inherit;
+  cursor: pointer; text-align: left;
+}
+.crow > button:focus-visible { outline: 2px solid var(--down); outline-offset: -2px; border-radius: 6px; }
+.spark { display: none; padding: 2px 0 12px; }
+.crow[data-open="1"] .spark { display: block; }
+.spark svg { width: 100%; height: auto; display: block; overflow: visible; }
+.sparkfoot {
+  display: flex; justify-content: space-between; gap: 8px; margin-top: 5px;
+  font-size: calc(10px * var(--fs)); color: var(--ink-3);
+}
+.crow[data-open="1"] .caret { transform: rotate(90deg); }
+
 /* ── 미국증시 매크로 ── */
 .macro { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 11px; }
 .macro .m {
@@ -947,7 +964,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
 
   /* ── 이벤트 ───────────────────────────────────────── */
   function wire() {
-    document.querySelectorAll(".trow > button").forEach(function (b) {
+    document.querySelectorAll(".trow > button, .crow > button").forEach(function (b) {
       b.addEventListener("click", function () {
         var row = b.parentElement;
         var open = row.dataset.open === "1" ? "0" : "1";
@@ -994,27 +1011,64 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
   /* ── 9. 체크리스트 ────────────────────────────────
      장 열기 전에 순서대로 훑는 자리. 미국 탭에도 있는 값이 섞여 있는데,
      여기서는 '오늘 확인할 것' 목록으로 한 줄씩 다시 세운다. */
-  function checkRow(name, value, change, chgPct, unit, note) {
-    var val, move;
-    if (unit === "yield") {
-      val = value.toFixed(2) + "%";
-      move = (change > 0 ? "+" : change < 0 ? "−" : "") + Math.abs(change).toFixed(2) + "%p";
-    } else if (unit === "krw") {
-      val = value.toLocaleString("ko-KR") + "원";
-      move = pct(chgPct);
-    } else if (unit === "usd") {
-      val = "$" + value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      move = pct(chgPct);
-    } else {
-      val = value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      move = pct(chgPct);
-    }
-    return '<div class="srow">' +
-      '<span class="sn">' + esc(name) + '</span>' +
-      '<span class="sa num">' + val + '</span>' +
+  function fmtVal(value, unit) {
+    if (unit === "yield") return value.toFixed(2) + "%";
+    if (unit === "krw") return value.toLocaleString("ko-KR") + "원";
+    if (unit === "usd") return "$" + value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  /* 최근 흐름. 라이브러리 없이 폴리라인 하나로 그린다.
+     세로 눈금은 안 그린다. 기간 최고·최저를 아래에 적는 편이 좁은 화면에서 낫다.
+     색은 행의 하루 등락이 아니라 이 그래프가 그리는 구간의 등락을 따른다.
+     금리가 한 달 내내 내려왔는데 어제 하루 올랐다고 선을 빨갛게 칠하면 거짓말이 된다. */
+  function spark(series, unit) {
+    if (!series || series.length < 3) return "";
+    var vals = series.map(function (p) { return p[1]; });
+    var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    var pad = (hi - lo) * 0.12 || Math.abs(hi) * 0.01 || 1;
+    var top = hi + pad, bot = lo - pad;
+    var W = 300, H = 70, n = series.length;
+    var xy = vals.map(function (v, i) {
+      return [(i / (n - 1)) * W, H - ((v - bot) / (top - bot)) * H];
+    });
+    var line = xy.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+    var area = "0," + H + " " + line + " " + W + "," + H;
+
+    var span = vals[0] ? (vals[n - 1] - vals[0]) / Math.abs(vals[0]) * 100 : 0;
+    var color = span > 0 ? "var(--up)" : span < 0 ? "var(--down)" : "var(--ink-3)";
+    var last = xy[n - 1];
+
+    return '<div class="spark">' +
+      '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="최근 ' + n + '일 흐름 ' + pct(span) + '">' +
+        '<polyline points="' + area + '" fill="' + color + '" opacity=".08" stroke="none"/>' +
+        '<polyline points="' + line + '" fill="none" stroke="' + color + '" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>' +
+        '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1) + '" r="2.6" fill="' + color + '"/>' +
+      '</svg>' +
+      '<div class="sparkfoot">' +
+        '<span class="num ' + cls(span) + '">' + n + '일 ' + pct(span) + '</span>' +
+        '<span class="num">최고 ' + fmtVal(hi, unit) + ' · 최저 ' + fmtVal(lo, unit) + '</span>' +
+        '<span>' + esc(series[n - 1][0]) + '</span>' +
+      '</div></div>';
+  }
+
+  function checkRow(name, value, change, chgPct, unit, note, series) {
+    var move = unit === "yield"
+      ? (change > 0 ? "+" : change < 0 ? "−" : "") + Math.abs(change).toFixed(2) + "%p"
+      : pct(chgPct);
+    var chart = spark(series, unit);
+
+    var row =
+      '<span class="sn">' + (chart ? '<span class="caret">▸</span> ' : "") + esc(name) + '</span>' +
+      '<span class="sa num">' + fmtVal(value, unit) + '</span>' +
       '<span class="sm">' + (note ? '<span class="chip">' + esc(note) + '</span>' : "") + '</span>' +
-      '<span class="sd num ' + cls(unit === "yield" ? change : chgPct) + '">' + move + '</span>' +
-      '</div>';
+      '<span class="sd num ' + cls(unit === "yield" ? change : chgPct) + '">' + move + '</span>';
+
+    // 그래프가 없으면 누를 것도 없다. 그때는 버튼으로 만들지 않는다.
+    if (!chart) return '<div class="srow">' + row + '</div>';
+    return '<div class="crow" data-open="0">' +
+      '<button type="button" class="srow" aria-expanded="false">' + row + '</button>' +
+      chart + '</div>';
   }
 
   function panelCheck(d) {
@@ -1029,16 +1083,18 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
 
     var rows = "";
     var wti = extra("wti");
-    if (wti) rows += checkRow(wti.name, wti.value, wti.change, wti.chg_pct, wti.unit, wti.note);
-    if (ust10) rows += checkRow("미 10년물 국채금리", ust10.value, ust10.change, ust10.chg_pct, "yield", ust10.note || "");
+    if (wti) rows += checkRow(wti.name, wti.value, wti.change, wti.chg_pct, wti.unit, wti.note, wti.series);
+    if (ust10) rows += checkRow("미 10년물 국채금리", ust10.value, ust10.change, ust10.chg_pct,
+                                "yield", ust10.note || "", ust10.series);
     var btc = extra("btc");
-    if (btc) rows += checkRow(btc.name, btc.value, btc.change, btc.chg_pct, btc.unit, btc.note);
+    if (btc) rows += checkRow(btc.name, btc.value, btc.change, btc.chg_pct, btc.unit, btc.note, btc.series);
     var dxy = extra("dxy");
-    if (dxy) rows += checkRow(dxy.name, dxy.value, dxy.change, dxy.chg_pct, dxy.unit, dxy.note);
+    if (dxy) rows += checkRow(dxy.name, dxy.value, dxy.change, dxy.chg_pct, dxy.unit, dxy.note, dxy.series);
 
     h += '<div class="card"><h2>오늘 확인</h2>' +
          '<p class="sub">' + (u.as_of ? '현지 ' + esc(u.as_of) + ' 종가 기준' : '') +
-         '</p><div class="list">' + (rows || '<div class="empty">데이터 없음</div>') + '</div></div>';
+         '</p><p class="sub">항목을 누르면 최근 30일 흐름이 열립니다.</p>' +
+         '<div class="list">' + (rows || '<div class="empty">데이터 없음</div>') + '</div></div>';
 
     /* 미국 증시 마감 강세 종목 */
     var strong = (u.stocks || []).filter(function (x) { return x.chg_pct > 0; }).slice(0, 8);

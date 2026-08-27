@@ -132,6 +132,11 @@ def _series(raw: list[dict]) -> list[tuple[str, float]]:
     return out
 
 
+def _chart(rows: list[tuple[str, float]], n: int = 30) -> list[list]:
+    """체크리스트 그래프용. 오래된 것부터 [["2026-08-27", 82.38], …] 로 최대 n개."""
+    return [[f"{d[:4]}-{d[4:6]}-{d[6:]}", round(v, 4)] for d, v in rows[:n]][::-1]
+
+
 def _move(rows: list[tuple[str, float]]) -> dict | None:
     """최신 종가와 그 전 종가로 등락을 만든다. 두 개가 없으면 못 쓴다."""
     if len(rows) < 2:
@@ -229,7 +234,7 @@ def _fetch_yahoo(symbol: str) -> list[tuple[str, float]]:
     try:
         r = requests.get(
             f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
-            params={"range": "10d", "interval": "1d"},
+            params={"range": "3mo", "interval": "1d"},
             headers={"User-Agent": "Mozilla/5.0"},
             timeout=15,
         )
@@ -256,43 +261,41 @@ def _fetch_yahoo(symbol: str) -> list[tuple[str, float]]:
 def _fetch_btc() -> dict | None:
     """비트코인. KIS 에는 없어서 공개 시세를 쓴다.
 
-    업비트(원화) 를 먼저 본다. 국내에서 보는 값이 그쪽이고 키도 필요 없다.
-    막히면 CoinGecko 의 달러 시세로 넘어간다. 둘 다 안 되면 화면에서 뺀다.
+    업비트 일봉(원화)을 먼저 본다. 국내에서 보는 값이 그쪽이고 키도 필요 없다.
+    다른 항목과 같은 방식(종가 두 개로 등락 계산 + 그래프용 시계열)을 쓰려고
+    현재가가 아니라 일봉으로 받는다. 막히면 야후 BTC-USD 로 넘어간다.
     """
     try:
         r = requests.get(
-            "https://api.upbit.com/v1/ticker", params={"markets": "KRW-BTC"}, timeout=10
-        )
-        r.raise_for_status()
-        d = r.json()[0]
-        return {
-            "key": "btc", "name": "비트코인",
-            "value": round(float(d["trade_price"])),
-            "change": round(float(d["signed_change_price"])),
-            "chg_pct": round(float(d["signed_change_rate"]) * 100, 2),
-            "unit": "krw", "note": "업비트 · 전일 대비",
-        }
-    except Exception as exc:
-        log.warning("업비트 시세 실패: %s", exc)
-
-    try:
-        r = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price",
-            params={"ids": "bitcoin", "vs_currencies": "usd", "include_24hr_change": "true"},
+            "https://api.upbit.com/v1/candles/days",
+            params={"market": "KRW-BTC", "count": 30},
+            headers={"Accept": "application/json"},
             timeout=10,
         )
         r.raise_for_status()
-        d = r.json()["bitcoin"]
-        price, pct = float(d["usd"]), round(float(d["usd_24h_change"]), 2)
+        rows = [
+            (c["candle_date_time_kst"][:10].replace("-", ""), float(c["trade_price"]))
+            for c in r.json()
+        ]
+        m = _move(rows)
+        if m:
+            return {
+                "key": "btc", "name": "비트코인",
+                "value": round(m["value"]), "change": round(m["change"]),
+                "chg_pct": m["chg_pct"], "unit": "krw",
+                "note": "업비트 · 전일 대비", "series": _chart(rows),
+            }
+    except Exception as exc:
+        log.warning("업비트 시세 실패: %s", exc)
+
+    rows = _fetch_yahoo("BTC-USD")
+    m = _move(rows)
+    if m:
         return {
             "key": "btc", "name": "비트코인",
-            "value": round(price, 2),
-            "change": round(price - price / (1 + pct / 100), 2),
-            "chg_pct": pct,
-            "unit": "usd", "note": "CoinGecko · 24시간",
+            "value": m["value"], "change": m["change"], "chg_pct": m["chg_pct"],
+            "unit": "usd", "note": "야후 시세", "series": _chart(rows),
         }
-    except Exception as exc:
-        log.warning("CoinGecko 시세 실패: %s", exc)
 
     return None
 
@@ -340,7 +343,8 @@ def collect_us(kis: KisClient) -> dict:
             }
         )
 
-    m = _move(_fetch_yahoo(UST10["yahoo"]))
+    ust10_rows = _fetch_yahoo(UST10["yahoo"])
+    m = _move(ust10_rows)
     if m:
         y = _yield_value(m["value"])
         if y is None:
@@ -352,6 +356,7 @@ def collect_us(kis: KisClient) -> dict:
                     "name": UST10["name"], "value": round(y, 2),
                     "change": round(m["change"] * scale, 3),   # %p
                     "chg_pct": m["chg_pct"], "unit": "yield", "note": "야후 시세",
+                    "series": [[d, round(v * scale, 4)] for d, v in _chart(ust10_rows)],
                 }
             )
 
@@ -389,7 +394,7 @@ def collect_us(kis: KisClient) -> dict:
             {
                 "key": spec["key"], "name": spec["name"], "unit": spec["unit"],
                 "value": m["value"], "change": m["change"], "chg_pct": m["chg_pct"],
-                "note": note,
+                "note": note, "series": _chart(rows),
             }
         )
 

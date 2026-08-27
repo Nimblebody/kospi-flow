@@ -173,6 +173,15 @@ def _sample_us(rng: random.Random, date: str) -> dict:
         pct = round(mood * beta + rng.gauss(0, noise), 2)
         return round(base * (1 + pct / 100), 2), pct
 
+    def walk(last: float, n: int = 30) -> list[list]:
+        """그래프 확인용 가짜 시계열. 마지막 값에서 거꾸로 흔들어 올라간다."""
+        out, v = [], last
+        for i in range(n):
+            out.append(round(v, 4))
+            v = v / (1 + rng.gauss(0, 0.012))
+        days = [f"{date[:4]}-{date[4:6]}-{max(1, int(date[6:]) - i):02d}" for i in range(n)]
+        return [[d, x] for d, x in zip(days[::-1], out[::-1])]
+
     indices = []
     for name, base, beta in (("S&P 500", 6412.55, 1.0), ("나스닥", 21204.13, 1.4), ("다우", 44180.20, 0.7)):
         value, pct = move(base, beta, 0.4)
@@ -186,7 +195,8 @@ def _sample_us(rng: random.Random, date: str) -> dict:
     macro = [
         {"name": "VIX", "value": vix, "change": round(vix * vix_pct / 100, 2), "chg_pct": vix_pct, "unit": "pt"},
         {"name": "원/달러", "value": fx, "change": round(fx * fx_pct / 100, 2), "chg_pct": fx_pct, "unit": "won"},
-        {"name": "미 10년물", "value": y10, "change": round(y10 * y10_pct / 100, 3), "chg_pct": y10_pct, "unit": "yield"},
+        {"name": "미 10년물", "value": y10, "change": round(y10 * y10_pct / 100, 3),
+         "chg_pct": y10_pct, "unit": "yield", "note": "야후 시세", "series": walk(y10)},
     ]
 
     sectors = []
@@ -208,12 +218,14 @@ def _sample_us(rng: random.Random, date: str) -> dict:
     btc, btc_pct = move(110_898_000, 1.5, 2.2)
     extras = [
         {"key": "wti", "name": "국제유가 (WTI)", "unit": "usd",
-         "value": wti, "change": round(wti * wti_pct / 100, 2), "chg_pct": wti_pct, "note": ""},
+         "value": wti, "change": round(wti * wti_pct / 100, 2), "chg_pct": wti_pct,
+         "note": "", "series": walk(wti)},
         {"key": "dxy", "name": "달러지수", "unit": "pt",
-         "value": dxy, "change": round(dxy * dxy_pct / 100, 2), "chg_pct": dxy_pct, "note": ""},
+         "value": dxy, "change": round(dxy * dxy_pct / 100, 2), "chg_pct": dxy_pct,
+         "note": "", "series": walk(dxy)},
         {"key": "btc", "name": "비트코인", "unit": "krw",
          "value": round(btc), "change": round(btc * btc_pct / 100), "chg_pct": btc_pct,
-         "note": "업비트 · 전일 대비"},
+         "note": "업비트 · 전일 대비", "series": walk(btc)},
     ]
 
     prev = f"{date[:4]}-{date[4:6]}-{int(date[6:]) - 1:02d}"   # 현지는 하루 전
