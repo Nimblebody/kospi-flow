@@ -100,6 +100,17 @@ header {
 .head-in { max-width: 520px; margin: 0 auto; padding: 11px 14px 9px; display: flex; align-items: baseline; gap: 9px; }
 .brand { font-weight: 700; font-size: 16px; letter-spacing: -.01em; }
 .head-date { font-size: 12.5px; color: var(--ink-2); margin-left: auto; }
+.head-date select {
+  font: inherit; color: inherit; background: var(--surface); cursor: pointer;
+  border: 1px solid var(--line); border-radius: 6px; padding: 2px 5px;
+}
+.head-date select:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+/* 요약만 있는 과거 날짜에 붙는 안내 */
+.thin-note {
+  margin: 0 0 11px; padding: 8px 10px; border-radius: 8px;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  font-size: 11.5px; color: var(--ink-2); line-height: 1.55;
+}
 .badge {
   font-size: 10.5px; font-weight: 600; letter-spacing: .04em;
   padding: 2px 7px; border-radius: 999px;
@@ -274,6 +285,7 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
     <span class="brand">코스피 수급 지도</span>
     <span class="badge" id="stage">—</span>
     <span class="head-date num" id="date">—</span>
+    <span class="head-date" id="datepick" hidden><select id="datesel" aria-label="날짜 선택"></select></span>
   </div>
   <nav class="tabs" id="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-panel="p-sum">요약</button>
@@ -345,6 +357,9 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
   }
 
   /* ── 렌더 ─────────────────────────────────────────── */
+  // 축약본(보관 기간이 지난 과거 리포트)인가. 전체본에만 themes_top 이 있다.
+  function isThin(d) { return !d.themes_top; }
+
   function render(d) {
     document.getElementById("date").textContent = d.date;
     var stage = document.getElementById("stage");
@@ -364,6 +379,14 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
   /* ── 1. 요약 ──────────────────────────────────────── */
   function panelSummary(d) {
     var h = '<section class="panel on" id="p-sum">';
+
+    if (isThin(d)) {
+      h += '<div class="card"><p class="thin-note">' +
+           '보관 기간이 지나 요약만 남은 날짜입니다. ' +
+           '테마별 순매수와 자금 이동은 그대로 볼 수 있지만, ' +
+           '테마 구성 종목과 종목별 순위·거래대금 급증은 남아 있지 않습니다.' +
+           '</p></div>';
+    }
 
     h += '<div class="card"><ul class="headline">' +
          (d.headline || []).map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") +
@@ -453,7 +476,9 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
           '<span class="amt num ' + cls(t.net_eok) + '">' + eok(t.net_eok) + '</span></span>' +
           magBar(t.net_eok, max) +
           '<span class="meta"><span class="num ' + cls(t.avg_chg_pct) + '">평균 ' + pct(t.avg_chg_pct) + '</span>' +
-          '<span>·</span><span class="num">' + t.members_with_data + '/' + t.members_total + '종목</span>' +
+          (t.members_total
+            ? '<span>·</span><span class="num">' + t.members_with_data + '/' + t.members_total + '종목</span>'
+            : "") +
           lead + chips + '</span>' +
         '</button>' +
         '<div class="members"><table>' + body + '</table>' +
@@ -466,8 +491,22 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
     }).join("");
   }
 
+  // 축약본에는 themes_top/bottom 이 없다. 남아 있는 themes 에서 같은 기준으로 뽑는다.
+  // (featured 를 축약본에도 남겨둔 덕에 최신 화면과 순위가 어긋나지 않는다)
+  function deriveBuckets(d) {
+    var themes = d.themes || [];
+    // featured 필드 자체가 없는 옛 축약본이면 거를 수 없다. 전부 쓴다.
+    var hasFlag = themes.some(function (t) { return "featured" in t; });
+    var all = hasFlag ? themes.filter(function (t) { return t.featured; }) : themes;
+    if (!all.length) all = themes;
+    var pos = all.filter(function (t) { return t.net_eok > 0; }).slice(0, 8);
+    var neg = all.filter(function (t) { return t.net_eok < 0; }).slice(-8).reverse();
+    return [pos, neg];
+  }
+
   function panelTheme(d) {
     var top = d.themes_top || [], bot = d.themes_bottom || [];
+    if (isThin(d)) { var b = deriveBuckets(d); top = b[0]; bot = b[1]; }
     var max = Math.max.apply(null,
       top.concat(bot).map(function (t) { return Math.abs(t.net_eok); }).concat([1]));
 
@@ -484,7 +523,8 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
     }
 
     h += '<div class="card"><h2>자금이 들어온 테마</h2>' +
-         '<p class="sub">외국인 + 기관 순매수 대금 합계. 테마명을 누르면 구성 종목이 열립니다.' +
+         '<p class="sub">외국인 + 기관 순매수 대금 합계.' +
+         (isThin(d) ? '' : ' 테마명을 누르면 구성 종목이 열립니다.') +
          why + '</p>' +
          '<div class="list">' + (top.length ? themeRows(top, max) : '<div class="empty">데이터 없음</div>') + '</div>' +
          '<button class="tablebtn" data-table="tbl-theme">표로 보기</button>' +
@@ -496,16 +536,18 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
   }
 
   function themeTable(rows) {
+    // 축약본에는 평균등락·종목수·1등비중이 없다. 빈 칸으로 둔다.
+    function n(v) { return v == null ? "—" : v.toLocaleString("ko-KR"); }
     return '<table><thead><tr><th>테마</th><th>순매수(억)</th><th>외국인</th><th>기관</th>' +
       '<th>평균등락</th><th>종목</th><th>1등비중</th></tr></thead><tbody>' +
       rows.map(function (t) {
         return '<tr><td>' + esc(t.name) + '</td>' +
-          '<td class="num">' + t.net_eok.toLocaleString("ko-KR") + '</td>' +
-          '<td class="num">' + t.foreign_eok.toLocaleString("ko-KR") + '</td>' +
-          '<td class="num">' + t.institution_eok.toLocaleString("ko-KR") + '</td>' +
-          '<td class="num">' + t.avg_chg_pct.toFixed(2) + '</td>' +
-          '<td class="num">' + t.members_with_data + '/' + t.members_total + '</td>' +
-          '<td class="num">' + Math.round((t.top1_share || 0) * 100) + '%</td></tr>';
+          '<td class="num">' + n(t.net_eok) + '</td>' +
+          '<td class="num">' + n(t.foreign_eok) + '</td>' +
+          '<td class="num">' + n(t.institution_eok) + '</td>' +
+          '<td class="num">' + (t.avg_chg_pct == null ? "—" : t.avg_chg_pct.toFixed(2)) + '</td>' +
+          '<td class="num">' + (t.members_total ? t.members_with_data + '/' + t.members_total : "—") + '</td>' +
+          '<td class="num">' + (t.top1_share == null ? "—" : Math.round(t.top1_share * 100) + '%') + '</td></tr>';
       }).join("") + '</tbody></table>';
   }
 
@@ -653,12 +695,53 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
   var boot = null;
   try { boot = JSON.parse(document.getElementById("bootstrap").textContent); } catch (e) { boot = null; }
 
+  /* ── 날짜 선택 ─────────────────────────────────────
+     index.json 의 dates 를 채워 넣고, 고르면 그날 리포트를 불러 다시 그린다.
+     인라인 단일 HTML(build_standalone)에는 옆에 데이터 파일이 없으므로 띄우지 않는다. */
+  function setupDatePicker(current) {
+    fetch("data/index.json?t=" + Date.now())
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (idx) {
+        var dates = (idx && idx.dates) || [];
+        if (dates.length < 2) return;
+
+        var full = {};
+        ((idx && idx.full) || []).forEach(function (d) { full[d] = 1; });
+
+        var sel = document.getElementById("datesel");
+        sel.innerHTML = dates.map(function (d, i) {
+          var label = d + (i === 0 ? " (최신)" : full[d] ? "" : " · 요약만");
+          return '<option value="' + d + '">' + label + "</option>";
+        }).join("");
+        sel.value = current;
+        document.getElementById("datepick").hidden = false;
+
+        sel.addEventListener("change", function () {
+          var pick = sel.value;
+          var url = (pick === dates[0] ? "data/latest.json" : "data/" + pick + ".json");
+          fetch(url + "?t=" + Date.now())
+            .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+            .then(function (d) {
+              render(d);
+              document.getElementById("datepick").hidden = false;
+              document.getElementById("datesel").value = pick;
+              window.scrollTo({ top: 0, behavior: "instant" });
+            })
+            .catch(function () {
+              document.getElementById("main").innerHTML =
+                '<div class="card"><h2>' + esc(pick) + ' 리포트를 불러오지 못했습니다</h2></div>';
+            });
+        });
+      })
+      .catch(function () {});
+  }
+
   if (boot) {
     render(boot);
   } else {
     fetch("data/latest.json?t=" + Date.now())
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
-      .then(render)
+      .then(function (d) { render(d); setupDatePicker(d.date); })
       .catch(function (err) {
         document.getElementById("main").innerHTML =
           '<div class="card"><h2>리포트를 불러오지 못했습니다</h2>' +
