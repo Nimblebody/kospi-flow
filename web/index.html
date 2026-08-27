@@ -419,6 +419,13 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
       if (t.breadth >= 0.8) chips += '<span class="chip">참여 폭 넓음</span>';
       else if (t.breadth <= 0.3) chips += '<span class="chip">일부 종목 주도</span>';
 
+      // 1등 종목 비중. 대형주 하나가 테마를 끌고 가는지 바로 보이게 적는다.
+      var lead = "";
+      if (t.top1_name && t.top1_share) {
+        lead = '<span>·</span><span class="num">' + esc(t.top1_name) + ' ' +
+               Math.round(t.top1_share * 100) + '%</span>';
+      }
+
       var body = '<tr><th>종목</th><th>순매수</th><th>외국인</th><th>기관</th></tr>' +
         (t.stocks || []).map(function (s) {
           return '<tr><td>' + esc(s.name) +
@@ -436,7 +443,7 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
           magBar(t.net_eok, max) +
           '<span class="meta"><span class="num ' + cls(t.avg_chg_pct) + '">평균 ' + pct(t.avg_chg_pct) + '</span>' +
           '<span>·</span><span class="num">' + t.members_with_data + '/' + t.members_total + '종목</span>' +
-          chips + '</span>' +
+          lead + chips + '</span>' +
         '</button>' +
         '<div class="members"><table>' + body + '</table></div>' +
       '</div>';
@@ -449,8 +456,15 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
       top.concat(bot).map(function (t) { return Math.abs(t.net_eok); }).concat([1]));
 
     var h = '<section class="panel" id="p-theme">';
+    var demoted = d.themes_demoted || 0;
+    var why = demoted
+      ? ' 대형주 하나가 절반 넘게 끌었거나 수급이 잡힌 종목이 3개 미만인 테마 ' +
+        demoted + '개는 아래 순위에서 뺐습니다.'
+      : '';
+
     h += '<div class="card"><h2>자금이 들어온 테마</h2>' +
-         '<p class="sub">외국인 + 기관 순매수 대금 합계. 테마명을 누르면 구성 종목이 열립니다.</p>' +
+         '<p class="sub">외국인 + 기관 순매수 대금 합계. 테마명을 누르면 구성 종목이 열립니다.' +
+         why + '</p>' +
          '<div class="list">' + (top.length ? themeRows(top, max) : '<div class="empty">데이터 없음</div>') + '</div>' +
          '<button class="tablebtn" data-table="tbl-theme">표로 보기</button>' +
          '<div class="tablewrap" id="tbl-theme">' + themeTable(top.concat(bot)) + '</div>' +
@@ -462,14 +476,15 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
 
   function themeTable(rows) {
     return '<table><thead><tr><th>테마</th><th>순매수(억)</th><th>외국인</th><th>기관</th>' +
-      '<th>평균등락</th><th>종목</th></tr></thead><tbody>' +
+      '<th>평균등락</th><th>종목</th><th>1등비중</th></tr></thead><tbody>' +
       rows.map(function (t) {
         return '<tr><td>' + esc(t.name) + '</td>' +
           '<td class="num">' + t.net_eok.toLocaleString("ko-KR") + '</td>' +
           '<td class="num">' + t.foreign_eok.toLocaleString("ko-KR") + '</td>' +
           '<td class="num">' + t.institution_eok.toLocaleString("ko-KR") + '</td>' +
           '<td class="num">' + t.avg_chg_pct.toFixed(2) + '</td>' +
-          '<td class="num">' + t.members_with_data + '/' + t.members_total + '</td></tr>';
+          '<td class="num">' + t.members_with_data + '/' + t.members_total + '</td>' +
+          '<td class="num">' + Math.round((t.top1_share || 0) * 100) + '%</td></tr>';
       }).join("") + '</tbody></table>';
   }
 
