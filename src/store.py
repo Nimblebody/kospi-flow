@@ -14,14 +14,16 @@ def report_path(date: str) -> Path:
     return config.DATA_DIR / f"{date}.json"
 
 
-def save_report(report: dict) -> Path:
+def save_report(report: dict, *, make_latest: bool = True) -> Path:
+    """make_latest=False 는 백필용. 과거 리포트가 latest.json 을 덮으면 안 된다."""
     path = report_path(report["date"])
     path.write_text(
         json.dumps(report, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
     )
 
-    latest = config.DATA_DIR / "latest.json"
-    latest.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    if make_latest:
+        latest = config.DATA_DIR / "latest.json"
+        latest.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
 
     dates = sorted(
         (p.stem for p in config.DATA_DIR.glob("20*.json")), reverse=True

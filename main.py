@@ -5,6 +5,7 @@
     python main.py --stage flash          # 장 마감 직후 속보
     python main.py --stage final          # 수급 확정 후
     python main.py --sample               # KIS 키 없이 가짜 데이터로 화면만 확인
+    python main.py --backfill 14          # 과거 14영업일치를 채워 자금 이동 활성화
 
 결과물
     web/data/<YYYY-MM-DD>.json  : 그날 리포트
@@ -16,7 +17,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import config
 from src import analyze as analyzer
@@ -34,12 +35,64 @@ def _default_date() -> str:
     return datetime.now(config.KST).strftime("%Y%m%d")
 
 
-def _prev_business_day(date: str) -> str:
-    d = datetime.strptime(date, "%Y%m%d")
-    d -= timedelta(days=1)
-    while d.weekday() >= 5:  # 토/일
-        d -= timedelta(days=1)
-    return d.strftime("%Y%m%d")
+def backfill(end_date: str, days: int) -> None:
+    """과거 영업일 리포트를 확정 수급으로 채운다.
+
+    자금 이동과 연속일수는 전 거래일 리포트가 있어야 계산된다. 종목당 1콜에
+    30일치가 오므로 2주든 한 달이든 콜 수는 같다.
+    """
+    from src import history
+    from src.collect import collect_market
+    from src.kis import KisClient
+
+    dates = history.business_days(end_date, days)
+    log.info("백필 %s ~ %s (%d영업일)", dates[0], dates[-1], len(dates))
+
+    kis = KisClient()
+    themes, theme_source = masters.load_themes()
+    stock_themes = masters.build_stock_to_themes(themes)
+
+    codes = history.universe()
+    # 실측 752종목 3분 15초 (동시 8스레드). 왕복 지연 때문에 초당 8콜까지는 안 나온다.
+    log.info("확정 수급 수집 %d종목 (종목당 1콜, 약 %.0f분)", len(codes), len(codes) / 4 / 60)
+    series = history.collect_series(kis, codes, end_date, set(dates))
+
+    made = 0
+    for date in dates:  # 오래된 날부터. 전날 리포트가 있어야 자금 이동이 나온다
+        flows = series.get(date) or {}
+        if not flows:
+            log.warning("%s 수급 없음 (휴장일로 보임). 건너뜁니다.", date)
+            continue
+
+        # 지수·업종은 과거를 되돌려주는 API 가 없다. 오늘 날짜만 실시간으로 채운다.
+        market = collect_market(kis) if date == end_date else None
+        snapshot = history.make_snapshot(date, flows, market, codes)
+        iso = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+        snapshot["date"] = iso
+
+        # 달력상 전 영업일이 아니라 '실제로 있는 가장 최근 리포트' 를 쓴다.
+        # 휴장일(대체공휴일 등)에는 리포트가 없어 자금 이동이 통째로 빠진다.
+        hist = store.load_history(iso, limit=10)
+
+        report = analyzer.analyze(
+            snapshot,
+            themes,
+            stock_themes,
+            previous_themes=hist[0].get("themes") if hist else None,
+            history_themes=[h.get("themes", []) for h in hist],
+            theme_source=theme_source + " (확정 수급)",
+        )
+        # 마지막 날만 latest.json 을 갱신한다
+        store.save_report(report, make_latest=(date == dates[-1]))
+        made += 1
+        rot = report["rotation"]
+        log.info(
+            "  %s 저장 · 테마 %d개 · 자금이동 %s",
+            iso, len(report["themes"]), "있음" if rot["available"] else "없음",
+        )
+
+    render.build_site()
+    log.info("백필 완료: %d일치", made)
 
 
 def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
@@ -76,16 +129,13 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
     iso_date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
     snapshot["date"] = iso_date
 
-    prev_iso = _prev_business_day(date)
-    prev_iso = f"{prev_iso[:4]}-{prev_iso[4:6]}-{prev_iso[6:]}"
-    prev_report = store.load_report(prev_iso)
     history = store.load_history(iso_date, limit=10)
 
     report = analyzer.analyze(
         snapshot,
         themes,
         stock_themes,
-        previous_themes=(prev_report or {}).get("themes"),
+        previous_themes=history[0].get("themes") if history else None,
         history_themes=[h.get("themes", []) for h in history],
         theme_source=theme_source,
     )
@@ -123,7 +173,17 @@ def main() -> None:
         "--sample", action="store_true", help="KIS 없이 샘플 데이터로 실행 (화면 확인용)"
     )
     p.add_argument("--no-notify", action="store_true", help="텔레그램 알림 끄기")
+    p.add_argument(
+        "--backfill",
+        type=int,
+        metavar="N",
+        help="과거 N영업일 리포트를 확정 수급으로 채운다 (자금 이동 표시용)",
+    )
     args = p.parse_args()
+
+    if args.backfill:
+        backfill(args.date or _default_date(), args.backfill)
+        return
 
     run(
         args.stage,

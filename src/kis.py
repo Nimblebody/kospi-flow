@@ -73,6 +73,13 @@ class KisClient:
                 ".env 파일이나 GitHub Secrets 에 넣어주세요."
             )
         self._session = requests.Session()
+        # 여러 스레드가 동시에 부를 때 기본 풀(10)에서 줄서지 않도록 넉넉히 잡는다.
+        # 실제 호출 속도는 아래 _RateLimiter 가 초당 건수로 제한한다.
+        adapter = requests.adapters.HTTPAdapter(
+            pool_connections=config.KIS_RATE_LIMIT_PER_SEC * 2,
+            pool_maxsize=config.KIS_RATE_LIMIT_PER_SEC * 2,
+        )
+        self._session.mount("https://", adapter)
         self._limiter = _RateLimiter(config.KIS_RATE_LIMIT_PER_SEC)
         self._token: str | None = None
 

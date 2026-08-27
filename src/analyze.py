@@ -54,9 +54,15 @@ def rollup_themes(
     min_members = config.MIN_THEME_MEMBERS if min_members is None else min_members
     by_code = {r["code"]: r for r in snapshot["flows"]}
 
+    # 커버리지의 분모는 '조회한 종목' 이어야 한다. 테마 마스터에는 코스닥 종목도
+    # 섞여 있는데 이건 애초에 조회 대상이 아니라, 분모에 넣으면 멀쩡한 테마가
+    # 표본이 얇은 것처럼 보인다. 유니버스가 없으면(가집계) 예전대로 전체를 센다.
+    universe = set(snapshot.get("universe") or ())
+
     result: list[dict] = []
     for name, codes in themes.items():
         members = [by_code[c] for c in codes if c in by_code]
+        listed = [c for c in codes if c in universe] if universe else codes
         active = [m for m in members if m["net"] != 0]
         if len(active) < min_members:
             continue
@@ -82,14 +88,14 @@ def rollup_themes(
                 "net_eok": to_eok(net),
                 "foreign_eok": to_eok(frgn),
                 "institution_eok": to_eok(orgn),
-                "members_total": len(codes),
+                "members_total": len(listed),
                 "members_with_data": len(active),
                 # 참여 폭: 수급이 잡힌 종목 중 순매수인 비율 (한 종목이 끌고 가는지 판별)
                 "breadth": round(buys / len(active), 2) if active else 0.0,
                 "top1_share": top1_share,
                 "top1_name": ranked[0]["name"] if ranked else "",
                 # 구성종목 중 실제로 수급이 잡힌 비율 (읽을 때 표본 크기 감을 주려고)
-                "coverage": round(len(active) / len(codes), 3) if codes else 0.0,
+                "coverage": round(len(active) / len(listed), 3) if listed else 0.0,
                 # 상단 노출 자격. 아래 analyze() 에서 themes_top/bottom 을 고를 때 쓴다.
                 "featured": (
                     top1_share < config.THEME_MAX_TOP1_SHARE

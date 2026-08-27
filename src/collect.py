@@ -103,29 +103,6 @@ def collect_flows(kis: KisClient) -> tuple[dict[str, dict], str]:
     return rows, unit_label
 
 
-# ---------------------------------------------------------------- 개인 수급
-def add_retail_flows(
-    kis: KisClient, flows: dict[str, dict], codes: list[str], date: str
-) -> int:
-    """관심 종목에 한해 개인 순매수(확정치)를 채운다. 종목당 1콜."""
-    filled = 0
-    for code in codes:
-        try:
-            out = kis.investor_trade_by_stock_daily(code, date)
-        except Exception as exc:
-            log.debug("개인 수급 조회 실패 %s: %s", code, exc)
-            continue
-        if not out:
-            continue
-        row = out[0]
-        rec = flows.get(code)
-        if rec is None:
-            continue
-        rec["prsn"] = _num(row.get("prsn_ntby_tr_pbmn")) * rec.get("_unit_mult", 1e6)
-        filled += 1
-    return filled
-
-
 # ---------------------------------------------------------------- 시장 전경
 def collect_market(kis: KisClient) -> dict:
     out: dict = {"indices": [], "sectors": []}
@@ -203,21 +180,28 @@ def collect_volume_leaders(kis: KisClient) -> list[dict]:
 
 # ---------------------------------------------------------------- 전체
 def collect_all(kis: KisClient, *, stage: str, date: str) -> dict:
-    """stage: 'flash'(장 마감 직후 속보) | 'final'(수급 확정 후)"""
+    """stage: 'flash'(장 마감 직후 속보) | 'final'(수급 확정 후)
+
+    flash 는 가집계 순위(상위 30종목)로 빠르게 훑고,
+    final 은 종목별 확정치를 직접 받는다. 자금 이동은 어제와 오늘이 같은
+    출처여야 의미가 있어서, 저장되는 리포트는 final 기준으로 맞춘다.
+    """
     log.info("수집 시작 stage=%s date=%s", stage, date)
-    flows, unit_label = collect_flows(kis)
     market = collect_market(kis)
     leaders = collect_volume_leaders(kis)
 
-    if stage == "final" and flows:
-        # 순매수 절대값 상위 종목만 개인 수급을 채운다 (콜 수 절약)
-        top = sorted(flows.values(), key=lambda r: -abs(r["net"]))[:40]
-        for rec in top:
-            rec["_unit_mult"] = 1e6
-        n = add_retail_flows(kis, flows, [r["code"] for r in top], date)
-        for rec in flows.values():
-            rec.pop("_unit_mult", None)
-        log.info("개인 수급 %d종목 보강", n)
+    if stage == "final":
+        from src import history
+
+        codes = history.universe()
+        log.info("확정 수급 수집 %d종목 (종목당 1콜)", len(codes))
+        series = history.collect_series(kis, codes, date, {date})
+        flows = series[date]
+        unit_label = "백만원(확정)"
+        universe = codes
+    else:
+        flows, unit_label = collect_flows(kis)
+        universe = []   # 가집계는 상위 30종목 순위라 유니버스 개념이 없다
 
     return {
         "date": date,
@@ -227,4 +211,5 @@ def collect_all(kis: KisClient, *, stage: str, date: str) -> dict:
         "flows": list(flows.values()),
         "market": market,
         "volume_leaders": leaders,
+        "universe": universe,
     }

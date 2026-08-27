@@ -197,6 +197,34 @@ def test_analyze_top_themes_exclude_dominated_ones():
     assert not any("쏠림테마" in h for h in rep["headline"])
 
 
+def test_coverage_denominator_uses_queried_universe():
+    """조회조차 안 한 종목은 커버리지 분모에서 빠져야 한다.
+
+    테마 마스터에는 코스닥 종목도 섞여 있는데 유니버스가 코스피뿐이다.
+    분모에 넣으면 멀쩡한 테마가 '표본이 얇다' 고 잘못 표시된다.
+    """
+    snap = {**SNAP, "flows": [
+        _flow("A", "가", 100, 0), _flow("B", "나", 90, 0), _flow("C", "다", 80, 0),
+    ], "universe": ["A", "B", "C", "D"]}
+    # 마스터에는 6종목이지만 조회 대상은 4종목뿐
+    themes = {"테마": ["A", "B", "C", "D", "코스닥1", "코스닥2"]}
+
+    rows = A.rollup_themes(snap, themes)
+    assert rows[0]["members_total"] == 4          # 6 이 아니라 4
+    assert rows[0]["members_with_data"] == 3
+    assert rows[0]["coverage"] == 0.75            # 3/4, 3/6 이 아니다
+
+
+def test_coverage_falls_back_when_no_universe():
+    """가집계(flash)에는 유니버스가 없다. 예전대로 전체를 센다."""
+    snap = {**SNAP, "flows": [
+        _flow("A", "가", 100, 0), _flow("B", "나", 90, 0), _flow("C", "다", 80, 0),
+    ]}
+    rows = A.rollup_themes(snap, {"테마": ["A", "B", "C", "D"]})
+    assert rows[0]["members_total"] == 4
+    assert rows[0]["coverage"] == 0.75
+
+
 def test_merge_absorbs_fully_contained_theme():
     """작은 테마의 종목이 큰 테마에 전부 들어있으면 흡수된다."""
     snap = {**SNAP, "flows": [
