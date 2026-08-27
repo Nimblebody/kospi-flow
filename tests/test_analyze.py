@@ -197,6 +197,68 @@ def test_analyze_top_themes_exclude_dominated_ones():
     assert not any("쏠림테마" in h for h in rep["headline"])
 
 
+def test_merge_absorbs_fully_contained_theme():
+    """작은 테마의 종목이 큰 테마에 전부 들어있으면 흡수된다."""
+    snap = {**SNAP, "flows": [
+        _flow("A", "가", 100, 0), _flow("B", "나", 90, 0), _flow("C", "다", 80, 0),
+    ]}
+    themes = {"큰테마": ["A", "B", "C"], "부분집합": ["A", "B"]}
+    rows = A.rollup_themes(snap, themes)
+    hosts = A.merge_contained_themes(rows)
+
+    assert [h["name"] for h in hosts] == ["큰테마"]
+    big = next(r for r in rows if r["name"] == "큰테마")
+    assert big["merged"] == ["부분집합"]
+    assert "_codes" not in big          # 내부 필드는 JSON 에 나가면 안 된다
+
+
+def test_merge_keeps_partially_overlapping_themes_apart():
+    """일부만 겹치는 테마는 묶지 않는다."""
+    snap = {**SNAP, "flows": [
+        _flow("A", "가", 100, 0), _flow("B", "나", 90, 0),
+        _flow("C", "다", 80, 0), _flow("D", "라", 70, 0),
+    ]}
+    themes = {"하나": ["A", "B", "C"], "둘": ["B", "C", "D"]}
+    hosts = A.merge_contained_themes(A.rollup_themes(snap, themes))
+    assert len(hosts) == 2
+
+
+def test_merge_prefers_featured_theme_as_host():
+    """대표성 없는 테마가 호스트가 되어 멀쩡한 테마를 데려가면 안 된다.
+
+    금액만으로 순서를 잡으면 쏠린큰테마가 호스트가 되고, 그 아래 깔린
+    고른작은테마까지 featured 필터에서 통째로 사라진다.
+    """
+    snap = {**SNAP, "flows": [
+        _flow("A", "대장주", 5000, 0),
+        _flow("B", "나", 10, 0), _flow("C", "다", 10, 0), _flow("D", "라", 10, 0),
+    ]}
+    themes = {"쏠린큰테마": ["A", "B", "C", "D"], "고른작은테마": ["B", "C", "D"]}
+    rows = A.rollup_themes(snap, themes)
+    big = next(r for r in rows if r["name"] == "쏠린큰테마")
+    small = next(r for r in rows if r["name"] == "고른작은테마")
+    assert big["featured"] is False               # 대장주가 99% 를 끈다
+    assert small["featured"] is True              # 셋이 고르게 나눠 가진다
+    assert abs(big["net_eok"]) > abs(small["net_eok"])
+
+    hosts = A.merge_contained_themes(rows)
+    # featured 인 고른작은테마가 먼저 호스트가 되고, 쏠린큰테마는 그 부분집합이
+    # 아니므로(오히려 상위집합) 흡수되지 않는다. 둘 다 살아남는다.
+    assert set(h["name"] for h in hosts) == {"쏠린큰테마", "고른작은테마"}
+    assert small["merged"] == []
+
+
+def test_analyze_reports_merge_and_demote_counts():
+    snap = {**SNAP, "flows": [
+        _flow("A", "가", 100, 0), _flow("B", "나", 90, 0), _flow("C", "다", 80, 0),
+    ]}
+    themes = {"큰테마": ["A", "B", "C"], "부분집합": ["A", "B"]}
+    rep = A.analyze(snap, themes, {}, theme_source="테스트")
+    assert rep["themes_merged"] == 1
+    assert [t["name"] for t in rep["themes_top"]] == ["큰테마"]
+    assert rep["themes_top"][0]["merged"] == ["부분집합"]
+
+
 def test_theme_buckets_split_by_sign_not_by_count():
     """순매수 테마가 '빠져나간 테마' 칸에 섞이면 안 된다."""
     snap = {**SNAP, "flows": [

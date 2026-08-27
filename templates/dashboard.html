@@ -203,6 +203,13 @@ ul.headline { margin: 0; padding: 0; }
 .members td { padding: 4px 0; border-top: 1px solid var(--line-soft); text-align: right; }
 .members td:first-child { text-align: left; color: var(--ink); }
 .members .sc { color: var(--ink-3); font-size: 10.5px; margin-left: 4px; }
+.members .merged {
+  margin: 9px 0 0; padding: 7px 9px; border-radius: 7px;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  font-size: 11px; color: var(--ink-2); line-height: 1.55;
+}
+.members .merged b { display: block; color: var(--ink-3); font-size: 10px;
+  font-weight: 500; margin-bottom: 3px; }
 .caret { color: var(--ink-3); font-size: 11px; transition: transform .16s ease; display: inline-block; }
 .trow[data-open="1"] .caret { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .caret { transition: none; } }
@@ -419,6 +426,10 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
       if (t.breadth >= 0.8) chips += '<span class="chip">참여 폭 넓음</span>';
       else if (t.breadth <= 0.3) chips += '<span class="chip">일부 종목 주도</span>';
 
+      // 구성종목이 이 테마에 완전히 포함돼 흡수된 테마들
+      var kin = t.merged || [];
+      if (kin.length) chips += '<span class="chip">+' + kin.length + '개 테마</span>';
+
       // 1등 종목 비중. 대형주 하나가 테마를 끌고 가는지 바로 보이게 적는다.
       var lead = "";
       if (t.top1_name && t.top1_share) {
@@ -445,7 +456,12 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
           '<span>·</span><span class="num">' + t.members_with_data + '/' + t.members_total + '종목</span>' +
           lead + chips + '</span>' +
         '</button>' +
-        '<div class="members"><table>' + body + '</table></div>' +
+        '<div class="members"><table>' + body + '</table>' +
+          (kin.length
+            ? '<p class="merged"><b>구성 종목이 같아 이 테마로 묶임</b>' +
+              kin.map(esc).join(" · ") + '</p>'
+            : "") +
+        '</div>' +
       '</div>';
     }).join("");
   }
@@ -456,11 +472,16 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
       top.concat(bot).map(function (t) { return Math.abs(t.net_eok); }).concat([1]));
 
     var h = '<section class="panel" id="p-theme">';
-    var demoted = d.themes_demoted || 0;
-    var why = demoted
-      ? ' 대형주 하나가 절반 넘게 끌었거나 수급이 잡힌 종목이 3개 미만인 테마 ' +
-        demoted + '개는 아래 순위에서 뺐습니다.'
-      : '';
+    var demoted = d.themes_demoted || 0, mergedN = d.themes_merged || 0;
+    var why = "";
+    if (mergedN) {
+      why += ' 구성 종목이 다른 테마에 완전히 포함되는 테마 ' + mergedN +
+             '개는 그 테마로 묶었습니다.';
+    }
+    if (demoted) {
+      why += ' 대형주 하나가 절반 넘게 끌었거나 수급이 잡힌 종목이 3개 미만인 테마 ' +
+             demoted + '개는 아래 순위에서 뺐습니다.';
+    }
 
     h += '<div class="card"><h2>자금이 들어온 테마</h2>' +
          '<p class="sub">외국인 + 기관 순매수 대금 합계. 테마명을 누르면 구성 종목이 열립니다.' +

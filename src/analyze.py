@@ -96,6 +96,8 @@ def rollup_themes(
                     and len(active) >= config.THEME_MIN_DATA_MEMBERS
                 ),
                 "avg_chg_pct": round(sum(chgs) / len(chgs), 2) if chgs else 0.0,
+                # 묶기 판정용. merge_contained_themes() 가 쓰고 나서 지운다.
+                "_codes": frozenset(m["code"] for m in active),
                 "stocks": [
                     {
                         "code": m["code"],
@@ -112,6 +114,40 @@ def rollup_themes(
 
     result.sort(key=lambda t: -t["net_eok"])
     return result
+
+
+# ---------------------------------------------------------------- 겹치는 테마 묶기
+def merge_contained_themes(rows: list[dict]) -> list[dict]:
+    """구성종목이 다른 테마에 완전히 포함되면 그 테마 아래로 흡수한다.
+
+    수급 API 가 상위 30종목만 주는 탓에, 웹툰·빅데이터처럼 성격이 다른 테마도
+    데이터가 잡힌 종목만 보면 똑같아진다. 겹침 비율에 임계값을 두면 몇 %로
+    할지가 자의적이라, '전부 포함될 때' 라는 사실 관계로만 묶는다.
+
+    대표는 featured 를 먼저 고른다. 순서를 금액만으로 잡으면 대표성 없는 테마가
+    호스트가 되어, 밑에 딸린 멀쩡한 테마까지 화면에서 통째로 사라진다.
+
+    rows 를 제자리에서 수정한다 (각 행에 "merged" 를 넣고 "_codes" 를 지운다).
+    돌려주는 값은 흡수되지 않고 남은 대표 테마들이다.
+    """
+    hosts: list[dict] = []
+    for t in sorted(rows, key=lambda r: (not r["featured"], -abs(r["net_eok"]))):
+        t["merged"] = []
+        codes = t["_codes"]
+        if not codes:
+            continue
+        host = next((h for h in hosts if codes <= h["_codes"]), None)
+        if host:
+            host["merged"].append(t["name"])
+        else:
+            hosts.append(t)
+
+    for t in rows:
+        t.pop("_codes", None)
+
+    # 들어온 순서(금액 내림차순)를 유지해서 돌려준다
+    kept = {h["name"] for h in hosts}
+    return [t for t in rows if t["name"] in kept]
 
 
 # ---------------------------------------------------------------- 자금 이동
@@ -284,9 +320,11 @@ def analyze(
     for t in theme_rows:
         t["streak"] = streaks.get(t["name"], 0)
 
-    # 대형주 하나가 끌고 가는 테마는 순위에서 뺀다. 전부 걸러지는 날에는
-    # 화면이 비는 것보다 낫기에 전체 목록으로 되돌린다.
-    featured = [t for t in theme_rows if t["featured"]] or theme_rows
+    # 구성종목이 다른 테마에 완전히 포함되는 테마부터 흡수하고,
+    # 남은 대표 중에서 대형주 하나가 끌고 가는 테마를 뺀다.
+    # 전부 걸러지는 날에는 화면이 비는 것보다 낫기에 되돌린다.
+    hosts = merge_contained_themes(theme_rows)
+    featured = [t for t in hosts if t["featured"]] or hosts
 
     market = snapshot["market"]
     spikes = find_spikes(snapshot, stock_themes)
@@ -335,8 +373,9 @@ def analyze(
         "themes_bottom": [t for t in featured if t["net_eok"] < 0][
             -config.TOP_THEMES :
         ][::-1],
-        # 대표성 기준에 걸려 상단에서 빠진 테마 수 (화면에 사유를 적는다)
-        "themes_demoted": len(theme_rows) - len(featured),
+        # 겹쳐서 묶인 테마 수 / 대표성 기준에 걸려 빠진 테마 수 (화면에 사유를 적는다)
+        "themes_merged": len(theme_rows) - len(hosts),
+        "themes_demoted": len(hosts) - len(featured),
         "rotation": rotation,
         "sectors": sectors,
         "spikes": spikes,
