@@ -68,8 +68,10 @@ SKIP_MASTER_DOWNLOAD = os.getenv("SKIP_MASTER_DOWNLOAD", "0") == "1"
 
 
 # ---------------------------------------------------------------- 텔레그램
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# 붙여넣을 때 딸려 오는 공백·줄바꿈·따옴표를 털어낸다. 이게 섞이면 토큰이 통째로
+# 무효가 되는데, 텔레그램은 404 만 돌려줘서 원인을 알아보기 어렵다.
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip().strip("'\"")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 
 def _chat_ids(raw: str) -> list[str]:

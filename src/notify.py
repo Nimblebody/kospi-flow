@@ -216,6 +216,12 @@ def send(report: dict) -> bool:
         except Exception as exc:
             # 한 명이 봇을 차단했다고 다른 사람 알림까지 막을 이유는 없다.
             log.warning("텔레그램 전송 실패 (%s): %s", chat_id, exc)
+            if "404" in str(exc):
+                # 404 는 받는 사람이 아니라 주소(=토큰)를 못 찾았다는 뜻이다.
+                log.warning(
+                    "  404 는 챗 아이디가 아니라 봇 토큰이 잘못됐다는 뜻입니다. "
+                    "python main.py --tg-test 로 확인하세요."
+                )
 
     if sent:
         log.info("텔레그램 알림 전송 완료 (%d/%d)", sent, len(config.TELEGRAM_CHAT_IDS))
