@@ -160,4 +160,41 @@ def make_snapshot(date: str, stage: str, themes: dict[str, list[str]]) -> dict:
         "flows": flows,
         "market": market,
         "volume_leaders": leaders,
+        "us": _sample_us(rng, date),
     }
+
+
+def _sample_us(rng: random.Random, date: str) -> dict:
+    """미국증시 탭 화면 확인용. 실제 수집은 src/overseas.py 가 한다."""
+    from src import overseas
+
+    mood = rng.gauss(0, 0.8)          # 그날의 시장 분위기 하나로 전체를 흔든다
+    def move(base: float, beta: float, noise: float) -> tuple[float, float]:
+        pct = round(mood * beta + rng.gauss(0, noise), 2)
+        return round(base * (1 + pct / 100), 2), pct
+
+    indices = []
+    for name, base, beta in (("S&P 500", 6412.55, 1.0), ("나스닥", 21204.13, 1.4), ("다우", 44180.20, 0.7)):
+        value, pct = move(base, beta, 0.4)
+        indices.append(
+            {"name": name, "value": value, "change": round(value * pct / 100, 2), "chg_pct": pct}
+        )
+
+    vix, vix_pct = move(15.8, -4.0, 3.0)      # 지수와 반대로 움직인다
+    fx, fx_pct = move(1352.4, -0.15, 0.25)
+    y10, y10_pct = move(4.28, 0.1, 0.9)
+    macro = [
+        {"name": "VIX", "value": vix, "change": round(vix * vix_pct / 100, 2), "chg_pct": vix_pct, "unit": "pt"},
+        {"name": "원/달러", "value": fx, "change": round(fx * fx_pct / 100, 2), "chg_pct": fx_pct, "unit": "won"},
+        {"name": "미 10년물", "value": y10, "change": round(y10 * y10_pct / 100, 3), "chg_pct": y10_pct, "unit": "yield"},
+    ]
+
+    sectors = []
+    for symbol, name in overseas.SECTORS:
+        beta = 1.6 if symbol in ("XLK", "SMH") else 0.4 if symbol in ("XLP", "XLU") else 1.0
+        value, pct = move(rng.randrange(30, 260) + 0.5, beta, 0.9)
+        sectors.append({"symbol": symbol, "name": name, "value": value, "chg_pct": pct})
+    sectors.sort(key=lambda x: x["chg_pct"], reverse=True)
+
+    prev = f"{date[:4]}-{date[4:6]}-{int(date[6:]) - 1:02d}"   # 현지는 하루 전
+    return {"as_of": prev, "indices": indices, "macro": macro, "sectors": sectors}

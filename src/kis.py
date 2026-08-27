@@ -310,6 +310,49 @@ class KisClient:
         )
         return body.get("output2") or body.get("output") or []
 
+    # ------------------------------------------------------- 해외 시세
+    def overseas_index_daily(
+        self, symbol: str, *, market_div: str = "N", days: int = 15
+    ) -> list[dict[str, str]]:
+        """해외 지수·환율·국채 기간별시세 (tr_id FHKST03030100).
+
+        market_div: N=해외지수 X=환율 I=국채 S=금선물
+        output2 는 일봉 목록. 등락률 필드에 기대지 않고 종가 두 개로 직접 계산한다.
+        """
+        end = datetime.now(config.KST)
+        start = end - timedelta(days=days * 2 + 10)   # 휴장일을 감안해 넉넉히
+        body = self.get(
+            "/uapi/overseas-price/v1/quotations/inquire-daily-chartprice",
+            "FHKST03030100",
+            {
+                "FID_COND_MRKT_DIV_CODE": market_div,
+                "FID_INPUT_ISCD": symbol,
+                "FID_INPUT_DATE_1": start.strftime("%Y%m%d"),
+                "FID_INPUT_DATE_2": end.strftime("%Y%m%d"),
+                "FID_PERIOD_DIV_CODE": "D",
+            },
+        )
+        return body.get("output2") or []
+
+    def overseas_stock_daily(self, symbol: str, excd: str) -> list[dict[str, str]]:
+        """해외주식 기간별시세 (tr_id HHDFS76240000).
+
+        excd: NAS=나스닥 NYS=뉴욕 AMS=아멕스(NYSE Arca ETF 가 여기로 잡힌다)
+        """
+        body = self.get(
+            "/uapi/overseas-price/v1/quotations/dailyprice",
+            "HHDFS76240000",
+            {
+                "AUTH": "",
+                "EXCD": excd,
+                "SYMB": symbol,
+                "GUBN": "0",   # 0:일 1:주 2:월
+                "BYMD": "",    # 빈값이면 최근일부터
+                "MODP": "1",   # 수정주가 반영
+            },
+        )
+        return body.get("output2") or []
+
     def is_holiday(self, date: str) -> bool | None:
         """국내휴장일 조회. 개장일이면 False, 휴장이면 True, 판단 불가 시 None."""
         try:

@@ -417,6 +417,8 @@ def analyze(
         "amount_unit_detected": snapshot.get("amount_unit_detected", ""),
         "headline": build_headline(market, investors, featured, rotation),
         "indices": market["indices"],
+        # 간밤 미국증시. 수집이 실패했으면 통째로 없다 (화면이 알아서 비운다).
+        "us": snapshot.get("us") or None,
         "investors": investors,
         "themes": theme_rows,
         # 부호로 자른다. 개수로만 자르면 순매수인 테마가

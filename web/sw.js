@@ -1,7 +1,7 @@
 // 앱 껍데기는 캐시해서 오프라인에서도 열리게, 데이터는 항상 네트워크 우선.
 // 캐시 이름 뒤에 붙는 해시는 index.html 내용에서 뽑는다. 화면이 바뀌면 캐시 이름이
 // 통째로 바뀌므로 낡은 껍데기가 남아 새 UI 를 가리는 일이 없다.
-const SHELL = 'kospi-flow-shell-fcbdafbc991b';
+const SHELL = 'kospi-flow-shell-9c83881d0603';
 const SHELL_FILES = ['./', './index.html', './manifest.webmanifest', './icon-192.png'];
 
 self.addEventListener('install', (e) => {

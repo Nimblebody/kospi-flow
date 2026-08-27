@@ -134,6 +134,16 @@ header {
   .head-meta { order: 2; width: 100%; margin-left: 0; justify-content: flex-end; }
 }
 
+/* ── 미국증시 매크로 ── */
+.macro { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-top: 11px; }
+.macro .m {
+  border: 1px solid var(--line-soft); border-radius: 9px;
+  padding: 8px 9px; background: var(--surface-2);
+}
+.macro .mn { font-size: calc(10.5px * var(--fs)); color: var(--ink-3); white-space: nowrap; }
+.macro .mv { font-size: calc(15px * var(--fs)); font-weight: 600; margin-top: 1px; letter-spacing: -.01em; }
+.macro .mc { font-size: calc(11px * var(--fs)); font-weight: 500; margin-top: 1px; }
+
 /* ── 설정 (글자 크기) ── */
 .sheet {
   max-width: 520px; margin: 0 auto; padding: 9px 14px 11px;
@@ -381,6 +391,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     <button role="tab" aria-selected="false" data-panel="p-move">자금 이동</button>
     <button role="tab" aria-selected="false" data-panel="p-stock">종목</button>
     <button role="tab" aria-selected="false" data-panel="p-sector">업종</button>
+    <button role="tab" aria-selected="false" data-panel="p-us">미국증시</button>
   </nav>
   <div class="sheet" id="settings" hidden>
     <span class="sheet-label" id="fs-label">글자 크기</span>
@@ -470,6 +481,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     var main = document.getElementById("main");
     main.innerHTML =
       panelSummary(d) + panelTheme(d) + panelMove(d) + panelStock(d) + panelSector(d) +
+      panelUs(d) +
       '<footer>테마 분류: ' + esc(d.theme_source || "—") + '<br>' +
       '수집 ' + esc((d.collected_at || "").replace("T", " ").slice(0, 16)) + ' · ' +
       '투자 판단의 근거로 쓰기 전에 원 데이터를 확인하세요.</footer>';
@@ -765,6 +777,74 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
         return '<tr><td>' + esc(x.name) + '</td><td class="num">' + x.chg_pct.toFixed(2) + '%</td>' +
                '<td class="num">' + (x.amount_share || 0).toFixed(2) + '%</td></tr>';
       }).join("") + '</tbody></table></div></div>';
+    return h + "</section>";
+  }
+
+  /* ── 6. 미국증시 ──────────────────────────────────── */
+  function panelUs(d) {
+    var u = d.us || null;
+    var h = '<section class="panel" id="p-us">';
+    if (!u || !((u.indices || []).length || (u.sectors || []).length)) {
+      return h + '<div class="card"><div class="empty">' +
+        '간밤 미국 증시 데이터가 없습니다.</div></div></section>';
+    }
+
+    /* 지수 + 매크로 */
+    h += '<div class="card"><h2>간밤 미국 마감</h2>' +
+         '<p class="sub">현지 ' + esc(u.as_of || "—") + ' 종가 기준. ' +
+         '국내 리포트가 나가는 시각에는 미국 장이 아직 열리기 전입니다.</p>' +
+         '<div class="idx">';
+    (u.indices || []).forEach(function (i) {
+      h += '<div class="tile">' +
+           '<div class="name">' + esc(i.name) + '</div>' +
+           '<div class="val num">' + i.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</div>' +
+           '<div class="chg num ' + cls(i.chg_pct) + '">' +
+             (i.chg_pct > 0 ? "▲" : i.chg_pct < 0 ? "▼" : "―") + ' ' +
+             Math.abs(i.change).toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) +
+             ' (' + pct(i.chg_pct) + ')</div>' +
+           '</div>';
+    });
+    h += '</div>';
+
+    if ((u.macro || []).length) {
+      h += '<div class="macro">';
+      (u.macro || []).forEach(function (m) {
+        // 금리만 %p 로 적는다. 4.28% 가 4.30% 가 된 걸 '+0.47%' 라고 쓰면 오해를 부른다.
+        var move = m.unit === "yield"
+          ? (m.change > 0 ? "+" : m.change < 0 ? "−" : "") + Math.abs(m.change).toFixed(2) + "%p"
+          : pct(m.chg_pct);
+        var val = m.unit === "yield" ? m.value.toFixed(2) + "%"
+                : m.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        h += '<div class="m"><div class="mn">' + esc(m.name) + '</div>' +
+             '<div class="mv num">' + val + '</div>' +
+             '<div class="mc num ' + cls(m.change) + '">' + move + '</div></div>';
+      });
+      h += '</div>';
+    }
+    h += '</div>';
+
+    /* 섹터 히트맵 */
+    var s = u.sectors || [];
+    if (s.length) {
+      var span = Math.max.apply(null, s.map(function (x) { return Math.abs(x.chg_pct); }).concat([0.5]));
+      h += '<div class="card"><h2>섹터</h2>' +
+           '<p class="sub">SPDR 섹터 ETF 등락률. 색이 진할수록 변동이 큽니다. ' +
+           '빨강 상승 / 파랑 하락.</p><div class="grid">';
+      s.forEach(function (x) {
+        h += '<div class="cell" style="' + heatStyle(x.chg_pct, span) + '">' +
+             '<span class="cn">' + esc(x.name) + '</span>' +
+             '<span class="cv num ' + cls(x.chg_pct) + '">' + pct(x.chg_pct) + '</span></div>';
+      });
+      h += '</div>' +
+        '<button class="tablebtn" data-table="tbl-us">표로 보기</button>' +
+        '<div class="tablewrap" id="tbl-us"><table><thead><tr><th>섹터</th><th>티커</th><th>등락률</th><th>종가</th></tr></thead><tbody>' +
+        s.map(function (x) {
+          return '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.symbol) + '</td>' +
+                 '<td class="num ' + cls(x.chg_pct) + '">' + x.chg_pct.toFixed(2) + '%</td>' +
+                 '<td class="num">' + x.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</td></tr>';
+        }).join("") + '</tbody></table></div></div>';
+    }
+
     return h + "</section>";
   }
 

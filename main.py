@@ -7,6 +7,7 @@
     python main.py --sample               # KIS 키 없이 가짜 데이터로 화면만 확인
     python main.py --backfill 14          # 과거 14영업일치를 채워 자금 이동 활성화
     python main.py --build-only           # API 없이 web/ 정적 파일만 다시 빌드
+    python main.py --probe-us             # 미국 시세 심볼 코드가 뭐가 통하는지 확인
 
 결과물
     web/data/<YYYY-MM-DD>.json  : 그날 리포트
@@ -124,6 +125,14 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
             if not row["name"]:
                 row["name"] = names.get(row["code"], row["code"])
 
+        # 미국증시는 곁들이는 자리다. 여기서 넘어져도 국내 리포트는 그대로 나간다.
+        try:
+            from src import overseas
+
+            snapshot["us"] = overseas.collect_us(kis)
+        except Exception as exc:
+            log.warning("미국증시 수집 실패(무시): %s", exc)
+
     if not snapshot["flows"]:
         log.error("수급 데이터가 비어 있습니다. 리포트를 만들지 않습니다.")
         sys.exit(1)
@@ -179,6 +188,11 @@ def main() -> None:
     )
     p.add_argument("--no-notify", action="store_true", help="텔레그램 알림 끄기")
     p.add_argument(
+        "--probe-us",
+        action="store_true",
+        help="미국 시세 후보 심볼을 전부 넣어 보고 되는 것을 표로 찍는다",
+    )
+    p.add_argument(
         "--build-only",
         action="store_true",
         help="KIS 호출 없이 web/ 정적 파일만 다시 만든다 (화면만 고쳤을 때)",
@@ -190,6 +204,13 @@ def main() -> None:
         help="과거 N영업일 리포트를 확정 수급으로 채운다 (자금 이동 표시용)",
     )
     args = p.parse_args()
+
+    if args.probe_us:
+        from src.kis import KisClient
+        from src import overseas
+
+        overseas.probe(KisClient())
+        return
 
     # 화면만 고친 경우. 데이터는 web/data 에 이미 있으니 API 를 부를 이유가 없다.
     if args.build_only:
