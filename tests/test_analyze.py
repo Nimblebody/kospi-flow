@@ -61,6 +61,55 @@ def test_theme_rollup_sums_and_sorts():
     assert rows[1]["breadth"] == 0.0
 
 
+def test_top1_share_measures_single_stock_dominance():
+    # 삼성전자 800억 / SK하이닉스 300억 -> 절대값 합 1100 중 800
+    rows = A.rollup_themes(SNAP, {"반도체": ["005930", "000660"]}, min_members=2)
+    semi = rows[0]
+    assert semi["top1_name"] == "삼성전자"
+    assert semi["top1_share"] == round(800 / 1100, 3)
+    assert semi["coverage"] == 1.0
+
+
+def test_top1_share_uses_absolute_sum_not_net():
+    # 매수 500 / 매도 -500 이라 순매수 합은 0. 분모가 net 이면 0으로 나눈다.
+    snap = {**SNAP, "flows": [
+        _flow("A", "매수주", 250, 250),
+        _flow("B", "매도주", -250, -250),
+    ]}
+    rows = A.rollup_themes(snap, {"혼조": ["A", "B"]}, min_members=2)
+    assert rows[0]["net_eok"] == 0.0
+    assert rows[0]["top1_share"] == 0.5      # 폭발하지 않는다
+
+
+def test_featured_excludes_single_stock_driven_theme():
+    # 한 종목이 압도 -> 종목 수가 충분해도 탈락
+    snap = {**SNAP, "flows": [
+        _flow("A", "대장주", 900, 0),
+        _flow("B", "곁다리1", 10, 0),
+        _flow("C", "곁다리2", 10, 0),
+    ]}
+    rows = A.rollup_themes(snap, {"쏠림테마": ["A", "B", "C"]}, min_members=2)
+    assert rows[0]["top1_share"] > 0.5
+    assert rows[0]["featured"] is False
+
+
+def test_featured_excludes_thin_sample():
+    # 고르게 나뉘었지만 데이터가 2종목뿐 -> 탈락
+    snap = {**SNAP, "flows": [_flow("A", "가", 100, 0), _flow("B", "나", 100, 0)]}
+    rows = A.rollup_themes(snap, {"얇은테마": ["A", "B", "C", "D"]}, min_members=2)
+    assert rows[0]["top1_share"] == 0.5
+    assert rows[0]["members_with_data"] == 2
+    assert rows[0]["featured"] is False
+
+
+def test_featured_keeps_broad_theme():
+    snap = {**SNAP, "flows": [
+        _flow("A", "가", 100, 0), _flow("B", "나", 90, 0), _flow("C", "다", 80, 0),
+    ]}
+    rows = A.rollup_themes(snap, {"고른테마": ["A", "B", "C"]}, min_members=2)
+    assert rows[0]["featured"] is True
+
+
 def test_theme_needs_minimum_members():
     rows = A.rollup_themes(SNAP, {"단일종목테마": ["005930"]}, min_members=2)
     assert rows == []
@@ -127,6 +176,48 @@ def test_spikes_filtered_by_threshold():
         {**SNAP["volume_leaders"][0], "vol_increase_pct": 20.0}
     ]}
     assert A.find_spikes(quiet, STOCK_THEMES) == []
+
+
+def test_analyze_top_themes_exclude_dominated_ones():
+    """쏠린 테마는 themes 에는 남지만 themes_top 에서는 빠진다."""
+    snap = {**SNAP, "flows": [
+        _flow("A", "대장주", 900, 0), _flow("B", "곁다리1", 10, 0), _flow("C", "곁다리2", 10, 0),
+        _flow("D", "가", 100, 0), _flow("E", "나", 90, 0), _flow("F", "다", 80, 0),
+    ]}
+    themes = {"쏠림테마": ["A", "B", "C"], "고른테마": ["D", "E", "F"]}
+    rep = A.analyze(snap, themes, {}, theme_source="테스트")
+
+    # 전체 목록에는 둘 다 있고, 금액이 큰 쏠림테마가 여전히 1위
+    assert [t["name"] for t in rep["themes"]] == ["쏠림테마", "고른테마"]
+    # 상단 노출은 고른테마 하나뿐
+    assert [t["name"] for t in rep["themes_top"]] == ["고른테마"]
+    assert rep["themes_demoted"] == 1
+    # 헤드라인도 고른테마를 가리킨다
+    assert any("고른테마" in h for h in rep["headline"])
+    assert not any("쏠림테마" in h for h in rep["headline"])
+
+
+def test_theme_buckets_split_by_sign_not_by_count():
+    """순매수 테마가 '빠져나간 테마' 칸에 섞이면 안 된다."""
+    snap = {**SNAP, "flows": [
+        _flow("A", "가", 100, 0), _flow("B", "나", 90, 0), _flow("C", "다", 80, 0),
+        _flow("D", "라", -100, 0), _flow("E", "마", -90, 0), _flow("F", "바", -80, 0),
+        _flow("G", "사", 5, 0), _flow("H", "아", 4, 0), _flow("I", "자", 3, 0),
+    ]}
+    themes = {"양수큰": ["A", "B", "C"], "음수": ["D", "E", "F"], "양수작은": ["G", "H", "I"]}
+    rep = A.analyze(snap, themes, {}, theme_source="테스트")
+
+    assert all(t["net_eok"] > 0 for t in rep["themes_top"])
+    assert all(t["net_eok"] < 0 for t in rep["themes_bottom"])
+    assert [t["name"] for t in rep["themes_bottom"]] == ["음수"]
+
+
+def test_analyze_falls_back_when_nothing_qualifies():
+    """전부 걸러지는 날에는 화면이 비지 않도록 전체 목록으로 되돌린다."""
+    snap = {**SNAP, "flows": [_flow("A", "대장주", 900, 0), _flow("B", "곁다리", 10, 0)]}
+    rep = A.analyze(snap, {"쏠림테마": ["A", "B"]}, {}, theme_source="테스트")
+    assert rep["themes_top"] and rep["themes_top"][0]["name"] == "쏠림테마"
+    assert rep["themes_demoted"] == 0
 
 
 def test_analyze_end_to_end_shape():

@@ -67,9 +67,15 @@ def rollup_themes(
         buys = sum(1 for m in active if m["net"] > 0)
         chgs = [m["chg_pct"] for m in members if m["chg_pct"]]
 
-        top = sorted(members, key=lambda m: -abs(m["net"]))[
-            : config.TOP_STOCKS_PER_THEME
-        ]
+        ranked = sorted(members, key=lambda m: -abs(m["net"]))
+        top = ranked[: config.TOP_STOCKS_PER_THEME]
+
+        # 집중도: 1등 종목이 테마 수급에서 차지하는 비중.
+        # 분모를 순매수 합이 아니라 절대값 합으로 두는 이유 — 매수/매도가 섞여
+        # 합이 0 에 가까워지면 비중이 무한대로 튀기 때문이다.
+        abs_sum = sum(abs(m["net"]) for m in active)
+        top1_share = round(abs(ranked[0]["net"]) / abs_sum, 3) if abs_sum else 0.0
+
         result.append(
             {
                 "name": name,
@@ -80,6 +86,15 @@ def rollup_themes(
                 "members_with_data": len(active),
                 # 참여 폭: 수급이 잡힌 종목 중 순매수인 비율 (한 종목이 끌고 가는지 판별)
                 "breadth": round(buys / len(active), 2) if active else 0.0,
+                "top1_share": top1_share,
+                "top1_name": ranked[0]["name"] if ranked else "",
+                # 구성종목 중 실제로 수급이 잡힌 비율 (읽을 때 표본 크기 감을 주려고)
+                "coverage": round(len(active) / len(codes), 3) if codes else 0.0,
+                # 상단 노출 자격. 아래 analyze() 에서 themes_top/bottom 을 고를 때 쓴다.
+                "featured": (
+                    top1_share < config.THEME_MAX_TOP1_SHARE
+                    and len(active) >= config.THEME_MIN_DATA_MEMBERS
+                ),
                 "avg_chg_pct": round(sum(chgs) / len(chgs), 2) if chgs else 0.0,
                 "stocks": [
                     {
@@ -269,6 +284,10 @@ def analyze(
     for t in theme_rows:
         t["streak"] = streaks.get(t["name"], 0)
 
+    # 대형주 하나가 끌고 가는 테마는 순위에서 뺀다. 전부 걸러지는 날에는
+    # 화면이 비는 것보다 낫기에 전체 목록으로 되돌린다.
+    featured = [t for t in theme_rows if t["featured"]] or theme_rows
+
     market = snapshot["market"]
     spikes = find_spikes(snapshot, stock_themes)
 
@@ -306,12 +325,18 @@ def analyze(
         "collected_at": snapshot["collected_at"],
         "theme_source": theme_source,
         "amount_unit_detected": snapshot.get("amount_unit_detected", ""),
-        "headline": build_headline(market, investors, theme_rows, rotation),
+        "headline": build_headline(market, investors, featured, rotation),
         "indices": market["indices"],
         "investors": investors,
         "themes": theme_rows,
-        "themes_top": theme_rows[: config.TOP_THEMES],
-        "themes_bottom": theme_rows[-config.TOP_THEMES :][::-1],
+        # 부호로 자른다. 개수로만 자르면 순매수인 테마가
+        # '자금이 빠져나간 테마' 칸에 섞여 들어간다.
+        "themes_top": [t for t in featured if t["net_eok"] > 0][: config.TOP_THEMES],
+        "themes_bottom": [t for t in featured if t["net_eok"] < 0][
+            -config.TOP_THEMES :
+        ][::-1],
+        # 대표성 기준에 걸려 상단에서 빠진 테마 수 (화면에 사유를 적는다)
+        "themes_demoted": len(theme_rows) - len(featured),
         "rotation": rotation,
         "sectors": sectors,
         "spikes": spikes,
