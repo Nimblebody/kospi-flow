@@ -1,0 +1,26 @@
+name: 텔레그램 알림 확인
+
+# 알림이 안 올 때 무엇이 막혔는지 본다. 확인 메시지를 한 통 보낸다.
+# 토큰 값은 안 찍고 길이만, 챗 아이디는 앞뒤 몇 자만 남긴다.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 설정 점검
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python main.py --tg-test

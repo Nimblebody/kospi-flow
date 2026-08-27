@@ -8,6 +8,7 @@
     python main.py --backfill 14          # 과거 14영업일치를 채워 자금 이동 활성화
     python main.py --build-only           # API 없이 web/ 정적 파일만 다시 빌드
     python main.py --probe-us             # 미국 시세 심볼 코드가 뭐가 통하는지 확인
+    python main.py --tg-test              # 텔레그램 알림 설정 점검 (확인 메시지 1통)
 
 결과물
     web/data/<YYYY-MM-DD>.json  : 그날 리포트
@@ -200,6 +201,11 @@ def main() -> None:
     )
     p.add_argument("--no-notify", action="store_true", help="텔레그램 알림 끄기")
     p.add_argument(
+        "--tg-test",
+        action="store_true",
+        help="텔레그램 토큰·챗 아이디를 두드려 보고 확인 메시지를 한 통 보낸다",
+    )
+    p.add_argument(
         "--probe-us",
         action="store_true",
         help="미국 시세 후보 심볼을 전부 넣어 보고 되는 것을 표로 찍는다",
@@ -216,6 +222,9 @@ def main() -> None:
         help="과거 N영업일 리포트를 확정 수급으로 채운다 (자금 이동 표시용)",
     )
     args = p.parse_args()
+
+    if args.tg_test:
+        sys.exit(0 if notify.selftest() else 1)
 
     if args.probe_us:
         from src.kis import KisClient
