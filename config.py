@@ -71,6 +71,19 @@ SKIP_MASTER_DOWNLOAD = os.getenv("SKIP_MASTER_DOWNLOAD", "0") == "1"
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
+
+def _chat_ids(raw: str) -> list[str]:
+    """여러 명에게 보낼 수 있게 쉼표로 나눈다.
+
+    텔레그램 sendMessage 는 한 번에 한 사람이라, 받는 쪽이 늘면 그만큼 호출한다.
+    시크릿을 여러 개 만드는 대신 한 칸에 나열한다 (예: "12345,-1009876").
+    그룹 방 아이디는 음수라 그대로 들어간다.
+    """
+    return [x.strip() for x in raw.replace(";", ",").split(",") if x.strip()]
+
+
+TELEGRAM_CHAT_IDS = _chat_ids(TELEGRAM_CHAT_ID)
+
 # 대시보드 공개 주소 (GitHub Pages). 알림 메시지의 링크로 쓰인다.
 SITE_URL = os.getenv("SITE_URL", "")
 

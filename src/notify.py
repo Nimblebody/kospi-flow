@@ -62,52 +62,73 @@ def build_message(report: dict) -> str:
     return "\n".join(lines)
 
 
+def _ready() -> bool:
+    if config.TELEGRAM_BOT_TOKEN and config.TELEGRAM_CHAT_IDS:
+        return True
+    log.info("텔레그램 설정이 없어 알림을 건너뜁니다.")
+    return False
+
+
 def send_document(path, caption: str = "") -> bool:
     """리포트 HTML 파일 자체를 텔레그램으로 보낸다.
 
     사이트를 따로 호스팅하지 않을 때 쓰는 경로. 받은 파일을 탭하면
     텔레그램 내장 브라우저에서 대시보드가 그대로 열린다.
     """
-    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
+    if not _ready():
         return False
-    try:
-        with open(path, "rb") as fh:
-            res = requests.post(
-                f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendDocument",
-                data={
-                    "chat_id": config.TELEGRAM_CHAT_ID,
-                    "caption": caption[:1000],
-                    "parse_mode": "HTML",
-                },
-                files={"document": (path.name, fh, "text/html")},
-                timeout=60,
-            )
-        res.raise_for_status()
-        log.info("텔레그램 리포트 파일 전송 완료")
-        return True
-    except Exception as exc:
-        log.warning("텔레그램 파일 전송 실패: %s", exc)
-        return False
+
+    sent = 0
+    for chat_id in config.TELEGRAM_CHAT_IDS:
+        try:
+            # 받는 사람마다 파일을 새로 읽는다. 앞사람에게 보내면서 커서가 끝까지 가서,
+            # 같은 핸들을 다시 쓰면 두 번째부터 빈 파일이 올라간다.
+            with open(path, "rb") as fh:
+                res = requests.post(
+                    f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendDocument",
+                    data={
+                        "chat_id": chat_id,
+                        "caption": caption[:1000],
+                        "parse_mode": "HTML",
+                    },
+                    files={"document": (path.name, fh, "text/html")},
+                    timeout=60,
+                )
+            res.raise_for_status()
+            sent += 1
+        except Exception as exc:
+            log.warning("텔레그램 파일 전송 실패 (%s): %s", chat_id, exc)
+
+    if sent:
+        log.info("텔레그램 리포트 파일 전송 완료 (%d/%d)", sent, len(config.TELEGRAM_CHAT_IDS))
+    return sent > 0
 
 
 def send(report: dict) -> bool:
-    if not config.TELEGRAM_BOT_TOKEN or not config.TELEGRAM_CHAT_ID:
-        log.info("텔레그램 설정이 없어 알림을 건너뜁니다.")
+    """받는 사람이 여럿이면 각각 보낸다. 한 명이 실패해도 나머지는 간다."""
+    if not _ready():
         return False
-    try:
-        res = requests.post(
-            f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id": config.TELEGRAM_CHAT_ID,
-                "text": build_message(report),
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            },
-            timeout=20,
-        )
-        res.raise_for_status()
-        log.info("텔레그램 알림 전송 완료")
-        return True
-    except Exception as exc:
-        log.warning("텔레그램 전송 실패: %s", exc)
-        return False
+
+    text = build_message(report)
+    sent = 0
+    for chat_id in config.TELEGRAM_CHAT_IDS:
+        try:
+            res = requests.post(
+                f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+                timeout=20,
+            )
+            res.raise_for_status()
+            sent += 1
+        except Exception as exc:
+            # 한 명이 봇을 차단했다고 다른 사람 알림까지 막을 이유는 없다.
+            log.warning("텔레그램 전송 실패 (%s): %s", chat_id, exc)
+
+    if sent:
+        log.info("텔레그램 알림 전송 완료 (%d/%d)", sent, len(config.TELEGRAM_CHAT_IDS))
+    return sent > 0
