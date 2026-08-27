@@ -53,6 +53,31 @@ jobs:
             echo "value=final" >> "$GITHUB_OUTPUT"
           fi
 
+      # 키가 없으면 4분 돌린 뒤가 아니라 여기서 바로 멈춘다.
+      # 값은 찍지 않고 설정 여부와 길이만 본다.
+      - name: 키 확인
+        env:
+          KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
+          KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
+        run: |
+          missing=0
+          for name in KIS_APP_KEY KIS_APP_SECRET; do
+            value="${!name}"
+            if [ -z "$value" ]; then
+              echo "::error::$name 이 비어 있습니다."
+              missing=1
+            else
+              echo "$name : 설정됨 (${#value}자)"
+            fi
+          done
+          if [ "$missing" = "1" ]; then
+            echo ""
+            echo "Settings > Secrets and variables > Actions 의"
+            echo "'Repository secrets' 에 등록되어 있는지 확인하세요."
+            echo "Dependabot / Codespaces 탭에 넣으면 워크플로에서 보이지 않습니다."
+            exit 1
+          fi
+
       - name: 리포트 생성
         env:
           KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
