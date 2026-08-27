@@ -135,6 +135,8 @@ def collect_market(kis: KisClient) -> dict:
             out["sectors"].append(
                 {
                     "name": name,
+                    # 종목-업종 매핑(masters.load_stock_sectors)과 같은 체계의 코드
+                    "code": (s.get("bstp_cls_code") or "").strip(),
                     "chg_pct": _num(s.get("bstp_nmix_prdy_ctrt")),
                     "amount": _num(s.get("acml_tr_pbmn")),
                     "amount_share": _num(s.get("acml_tr_pbmn_rlim")),

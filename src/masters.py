@@ -61,6 +61,41 @@ def load_stock_names() -> dict[str, str]:
     return names
 
 
+# 코스피 종목 마스터 뒤쪽 228자에 업종 코드가 들어 있다.
+# 오프셋은 추측하지 않고, 업종시세 API(inquire-index-category-price)가 주는
+# bstp_cls_code 와 가장 많이 일치하는 자리를 전수로 찾아서 확정했다.
+#   [4:8]  지수업종 대분류 — 제조 / 금융처럼 거칠다
+#   [8:12] 지수업종 중분류 — 화학 / 전기·전자처럼 화면 업종과 맞물린다
+# 중분류를 먼저 보고 없으면 대분류로 떨어진다. 이 조합으로 수급 유니버스의
+# 99.5%(748/752)에 업종이 붙는다.
+_SECTOR_OFFSETS = (8, 4)
+
+
+def load_stock_sectors() -> dict[str, str]:
+    """{종목코드: 업종코드} — 업종시세 API 의 bstp_cls_code 와 같은 체계."""
+    dest = config.CACHE_DIR / "kospi_code.mst"
+    if not _download(config.MASTER_URLS["kospi"], dest):
+        return {}
+    out: dict[str, str] = {}
+    with dest.open(encoding="cp949", errors="replace") as f:
+        for row in f:
+            row = row.rstrip("\n")
+            code = row[:9].strip()
+            if len(code) != 6:
+                continue
+            tail = row[len(row) - 228:]
+            if len(tail) < 12:
+                continue
+            for off in _SECTOR_OFFSETS:
+                val = tail[off : off + 4]
+                # 0000 은 '해당 없음'. 지수·규모구분 코드는 여기 나오지 않는다.
+                if val and val != "0000":
+                    out[code] = val
+                    break
+    log.info("종목 업종 매핑 %d 종목", len(out))
+    return out
+
+
 def load_themes() -> tuple[dict[str, list[str]], str]:
     """{테마명: [종목코드,...]} 와 출처 문자열을 돌려준다."""
     dest = config.CACHE_DIR / "theme_code.mst"

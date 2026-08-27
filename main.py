@@ -51,6 +51,7 @@ def backfill(end_date: str, days: int) -> None:
     kis = KisClient()
     themes, theme_source = masters.load_themes()
     stock_themes = masters.build_stock_to_themes(themes)
+    stock_sectors = masters.load_stock_sectors()
 
     codes = history.universe()
     # 실측 752종목 3분 15초 (동시 8스레드). 왕복 지연 때문에 초당 8콜까지는 안 나온다.
@@ -81,6 +82,7 @@ def backfill(end_date: str, days: int) -> None:
             previous_themes=hist[0].get("themes") if hist else None,
             history_themes=[h.get("themes", []) for h in hist],
             theme_source=theme_source + " (확정 수급)",
+            stock_sectors=stock_sectors,
         )
         # 마지막 날만 latest.json 을 갱신한다
         store.save_report(report, make_latest=(date == dates[-1]))
@@ -98,6 +100,7 @@ def backfill(end_date: str, days: int) -> None:
 def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
     themes, theme_source = masters.load_themes()
     stock_themes = masters.build_stock_to_themes(themes)
+    stock_sectors = masters.load_stock_sectors()
 
     if use_sample:
         from make_sample import make_snapshot
@@ -138,6 +141,7 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
         previous_themes=history[0].get("themes") if history else None,
         history_themes=[h.get("themes", []) for h in history],
         theme_source=theme_source,
+        stock_sectors=stock_sectors,
     )
 
     store.save_report(report)
