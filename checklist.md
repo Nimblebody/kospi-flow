@@ -76,3 +76,114 @@
 - [x] 25c. (버그) featured 필드가 없는 축약본에서 쏠림 필터가 무력화됨.
       필드 유무를 구분하도록 수정하고 store 축약본에 featured 를 남김
 - [x] 26. 재실행 · 커밋 · 푸시
+
+
+---
+
+# 다음 작업 (집에서 이어서)
+
+작성 2026-08-27 저녁. 사무실에서 여기까지 하고 끊었다.
+
+## 지금 상태
+
+사이트는 살아 있다. https://nimblebody.github.io/kospi-flow/
+
+- KIS 키 등록 완료. GitHub Actions 파이프라인이 우분투에서 정상 동작한다
+  (`kospi-flow bot` 이 리포트를 커밋하는 걸로 확인).
+- Pages 활성화 완료. 배포까지 성공.
+- 13영업일치(8/10~8/27) 백필 완료. 자금 이동과 연속일수가 나온다.
+- PWA 구성은 이미 다 있다. 홈 화면에 추가하면 앱처럼 열린다.
+
+## 집에서 처음 할 일 — 환경 세팅
+
+`.env` 는 gitignore 라 clone/pull 해도 따라오지 않는다. 새로 만들어야 한다.
+
+    cp .env.example .env
+    # KIS_APP_KEY(36자) / KIS_APP_SECRET(180자) 를 채운다
+    # 값은 KIS 개발자센터 또는 GitHub Secrets 등록 시 쓴 것과 동일
+
+윈도우면 tzdata 가 필요하다 (`ZoneInfo("Asia/Seoul")` 이 터진다).
+
+    pip install -r requirements.txt
+
+키가 살아 있는지 확인.
+
+    python -X utf8 -c "from src.kis import KisClient; print(len(KisClient().token))"
+
+화면 확인 (file:// 로 열면 CORS 로 막힌다. 반드시 서버로).
+
+    python -m http.server -d web 8000
+
+테스트.
+
+    python tests/test_analyze.py
+    python tests/test_history.py
+    python tests/test_store.py
+
+## 할 일
+
+### 1. 워크플로 수동 실행 — 먼저 할 것
+
+날짜 선택 기능이 커밋은 됐는데 **배포가 안 됐다.** 워크플로 트리거가
+schedule / workflow_dispatch 뿐이라 코드를 푸시해도 사이트가 갱신되지 않는다.
+
+  Actions 탭 → '코스피 수급 리포트' → Run workflow
+
+돌고 나면 https://nimblebody.github.io/kospi-flow/ 에 헤더 날짜 선택이 생긴다.
+확인 방법: 배포된 HTML 에 datesel 이 있는지 본다.
+
+    curl -s https://nimblebody.github.io/kospi-flow/ | grep -c datesel
+
+### 2. 배포 분리
+
+지금은 화면만 고쳐도 사이트에 반영하려면 KIS 를 752번 호출하는 4분짜리
+파이프라인을 통째로 돌려야 한다. push 트리거를 그냥 추가하면 코드 한 줄
+고칠 때마다 그게 돈다.
+
+방향. push 시에는 이미 커밋된 web/data 로 화면만 다시 만들어 배포하고
+(render.build_site() 만, 수 초), KIS 호출은 schedule 에서만 한다.
+
+    - 별도 워크플로(deploy.yml)를 만들지, daily.yml 에 조건을 걸지 결정
+    - render.build_site() 만 도는 경로가 필요하다. main.py 에 --build-only 같은
+      플래그를 두거나, python -c "from src import render; render.build_site()"
+    - 배포 스텝(configure-pages / upload-pages-artifact / deploy-pages)은 공유
+    - concurrency group 이 kospi-flow 로 같으니 예약 실행과 겹치지 않게 확인
+
+### 3. 다크모드 상단바 색
+
+templates/dashboard.html 의 theme-color 가 밝은 색 하나뿐이다. 폰이 다크모드면
+화면은 어두운데 상태바 주변만 밝게 뜬다.
+
+    <meta name="theme-color" content="#f7f7f5">
+    <!-- 아래를 추가 -->
+    <meta name="theme-color" content="#131416" media="(prefers-color-scheme: dark)">
+
+manifest 의 theme_color(#f6f6f4)와 페이지 meta(#f7f7f5)가 미묘하게 다른 것도
+같이 맞추면 좋다. render.py 의 MANIFEST 딕셔너리에 있다.
+
+### 4. 아이콘 교체
+
+src/render.py 의 _png() 가 의존성 없이 그린 막대 두 개짜리 임시 도형이다
+(192px 가 570바이트). 동작엔 문제없지만 홈 화면에서 밋밋하다.
+직접 만든 PNG 를 web/icon-192.png / icon-512.png 로 넣으면 된다.
+_png() 는 파일이 없을 때만 그리므로 덮어쓰면 그대로 유지된다.
+
+### 5. (선택) 텔레그램 알림
+
+리포트 생성 시 요약과 링크를 받는다. src/notify.py 는 이미 구현돼 있고
+값만 넣으면 켜진다.
+
+    GitHub Secrets:   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+    GitHub Variables: SITE_URL = https://nimblebody.github.io/kospi-flow/
+
+SITE_URL 이 비어 있으면 알림에 링크 대신 리포트 HTML 파일 자체를 보낸다
+(main.py 의 do_notify 분기).
+
+## 알아둘 것
+
+- 워크플로가 매일 web/data 를 커밋하므로, 로컬에서 작업하다 push 하면
+  봇 커밋과 충돌하기 쉽다. 작업 전에 git pull --rebase 를 먼저 하자.
+  충돌하면 web/data 는 최신 코드로 생성한 쪽을 남기면 된다.
+- 백필 재실행은 3분 15초 걸린다 (752종목, 8스레드).
+  KIS 는 30일치만 주므로 그 이상 과거는 못 채운다.
+- 자세한 설계 판단 근거는 전부 context-notes.md 에 있다.
