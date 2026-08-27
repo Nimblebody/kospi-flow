@@ -14,16 +14,47 @@ def report_path(date: str) -> Path:
     return config.DATA_DIR / f"{date}.json"
 
 
+# 날짜별 파일에 남길 테마 필드. 자금 흐름 시계열에 필요한 것만.
+_THEME_KEEP = ("name", "net_eok", "foreign_eok", "institution_eok", "streak")
+
+# 날짜별 파일에 남길 최상위 키. themes 는 아래에서 따로 추린다.
+_TOP_KEEP = (
+    "date", "stage", "collected_at", "theme_source",
+    "headline", "investors", "indices", "rotation",
+)
+
+
+def slim(report: dict) -> dict:
+    """날짜별 보관용으로 줄인다.
+
+    대시보드는 latest.json 만 읽고, 날짜별 파일은 자금 이동·연속일수 계산에
+    테마 이름과 금액만 쓰인다. 테마마다 상위 5종목을 중복 저장하는 stocks 가
+    파일의 절반이라, 이것만 빼도 190KB 가 23KB 가 된다.
+
+    되돌릴 수 없는 선택이다. KIS 는 30일치만 돌려주므로, 그 이후에는
+    종목별 상세를 다시 만들 방법이 없다.
+    """
+    out = {k: report[k] for k in _TOP_KEEP if k in report}
+    out["themes"] = [
+        {k: t[k] for k in _THEME_KEEP if k in t} for t in report.get("themes", [])
+    ]
+    return out
+
+
+def _dump(obj: dict) -> str:
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
+
+
 def save_report(report: dict, *, make_latest: bool = True) -> Path:
-    """make_latest=False 는 백필용. 과거 리포트가 latest.json 을 덮으면 안 된다."""
+    """날짜별 파일은 얇게, latest.json 은 화면이 쓰는 전체를 저장한다.
+
+    make_latest=False 는 백필용. 과거 리포트가 latest.json 을 덮으면 안 된다.
+    """
     path = report_path(report["date"])
-    path.write_text(
-        json.dumps(report, ensure_ascii=False, separators=(",", ":")), encoding="utf-8"
-    )
+    path.write_text(_dump(slim(report)), encoding="utf-8")
 
     if make_latest:
-        latest = config.DATA_DIR / "latest.json"
-        latest.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+        (config.DATA_DIR / "latest.json").write_text(_dump(report), encoding="utf-8")
 
     dates = sorted(
         (p.stem for p in config.DATA_DIR.glob("20*.json")), reverse=True

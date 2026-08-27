@@ -157,3 +157,36 @@ _prev_business_day 도 마찬가지.
 리포트가 77KB -> 190KB 로 커졌다. 매일 커밋하므로 연 250영업일에 약 46MB.
 대시보드는 latest.json 만 읽고, 과거 파일은 자금이동·연속일수 계산에
 테마 이름과 금액만 쓴다. 과거분을 얇게 저장하면 대부분 줄일 수 있다.
+
+## 2026-08-27 · 과거 리포트 얇게 저장 (4차)
+
+### 무엇이 컸나
+190KB 중 themes 가 90%(171KB), 그 안에서도 stocks(테마별 상위 5종목 표)가 107KB.
+243개 테마마다 같은 대형주를 중복 저장하고 있었다.
+
+### 구조
+    web/data/<날짜>.json   얇게 (24KB)  - 자금 흐름 시계열
+    web/data/latest.json   전체 (195KB) - 대시보드가 읽는 파일
+
+대시보드는 latest.json 하나만 fetch 하고, 날짜별 파일은 load_history 를 통해
+자금 이동(compute_rotation)과 연속일수(compute_streaks)에만 쓰인다.
+그 둘이 실제로 읽는 건 테마 이름과 net_eok 뿐이다.
+
+남긴 것. date / stage / collected_at / theme_source / headline / investors /
+indices / rotation / themes(name, net_eok, foreign_eok, institution_eok, streak).
+외국인·기관 분해와 시장 전체 투자자 합계를 남긴 건 나중에 시계열 차트를
+그릴 때 필요해서다. rotation 도 남겼다. 이 앱이 보여주려는 것 자체라서.
+
+버린 것. 테마별 stocks, themes_top/bottom, top_buy/sell, spikes, sectors.
+
+### 되돌릴 수 없다
+KIS 는 30일치만 돌려준다. 30일이 지나면 종목별 상세를 다시 만들 방법이 없다.
+그래서 '자금 흐름' 에 해당하는 시계열은 최대한 남기고 화면 표시용만 버렸다.
+
+### 검증
+얇게 만든 보관본으로 오늘 분석을 다시 돌려 결과가 같은지 확인했다.
+자금이동 짝 8개 전부 동일, 연속일수 불일치 0개.
+
+    13일치  2.43 MB -> 0.31 MB (12.8%)
+    파일당   192 KB -> 24 KB
+    연 250영업일 누적 예상  46 MB -> 6 MB
