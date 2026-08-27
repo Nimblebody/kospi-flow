@@ -105,5 +105,14 @@ TOP_THEMES = 8
 TOP_STOCKS_PER_THEME = 5
 TOP_MOVERS = 12
 
+# 업종 카드를 눌렀을 때 펼쳐 보여줄 종목 수
+SECTOR_STOCKS = 10
+
+# 자금 이동 패널. 유입 증가/감소 테마를 각각 이 개수만큼 뽑고,
+# 그 둘을 크기순으로 짝지어 이동 경로를 만든다.
+# 경로 개수는 짝짓기 결과에 달렸으므로 상한만 둔다.
+ROTATION_TOP_THEMES = 10
+ROTATION_MAX_PAIRS = 13
+
 # 거래대금 급증 판정: 최근 평균 대비 배수
 VOLUME_SPIKE_RATIO = 2.0

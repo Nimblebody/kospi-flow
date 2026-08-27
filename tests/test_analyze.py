@@ -150,6 +150,42 @@ def test_rotation_pairs_outflow_to_inflow():
     assert rot["pairs"][0] == {"from": "2차전지", "to": "반도체", "amount_eok": 1000.0}
 
 
+def _rotation_fixture(up_amt, down_amt, n=12):
+    today, prev = [], []
+    for i in range(n):
+        today.append({"name": f"오름{i}", "net_eok": float(up_amt)})
+        prev.append({"name": f"오름{i}", "net_eok": 0.0})
+        today.append({"name": f"내림{i}", "net_eok": float(-down_amt)})
+        prev.append({"name": f"내림{i}", "net_eok": 0.0})
+    return today, prev
+
+
+def test_rotation_row_counts_follow_config():
+    """유입·유출 목록 개수는 config.ROTATION_TOP_THEMES 를 따른다."""
+    import config
+
+    today, prev = _rotation_fixture(100, 100)
+    rot = A.compute_rotation(today, prev)
+    assert len(rot["inflow"]) == config.ROTATION_TOP_THEMES
+    assert len(rot["outflow"]) == config.ROTATION_TOP_THEMES
+
+    # top_n 을 명시하면 그게 우선한다
+    assert len(A.compute_rotation(today, prev, top_n=3)["inflow"]) == 3
+
+
+def test_rotation_pair_count_is_capped():
+    """경로 개수는 짝짓기 결과에 달렸고, 많이 나오면 상한에서 잘린다."""
+    import config
+
+    # 양쪽 금액이 딱 맞으면 1:1 로 소진돼 top_n 개만 나온다
+    aligned = A.compute_rotation(*_rotation_fixture(100, 100))
+    assert len(aligned["pairs"]) == config.ROTATION_TOP_THEMES
+
+    # 어긋나면 쪼개지며 늘어나고, 상한에서 잘린다
+    split = A.compute_rotation(*_rotation_fixture(99, 100))
+    assert len(split["pairs"]) == config.ROTATION_MAX_PAIRS
+
+
 def test_rotation_needs_previous_report():
     assert A.compute_rotation([{"name": "반도체", "net_eok": 1.0}], None)["available"] is False
 
@@ -308,6 +344,53 @@ def test_analyze_falls_back_when_nothing_qualifies():
     rep = A.analyze(snap, {"쏠림테마": ["A", "B"]}, {}, theme_source="테스트")
     assert rep["themes_top"] and rep["themes_top"][0]["name"] == "쏠림테마"
     assert rep["themes_demoted"] == 0
+
+
+# ------------------------------------------------------------ 업종 구성종목
+SECTORS = [
+    {"name": "전기·전자", "code": "0013", "chg_pct": 1.2, "amount": 1e12, "amount_share": 20.0},
+    {"name": "2차전지", "code": "0008", "chg_pct": -0.5, "amount": 5e11, "amount_share": 9.0},
+    {"name": "종합", "code": "0001", "chg_pct": 0.7, "amount": 2e12, "amount_share": 100.0},
+]
+STOCK_SECTORS = {"005930": "0013", "000660": "0013", "373220": "0008", "006400": "0008"}
+
+
+def test_sector_stocks_grouped_and_sorted():
+    out = A.attach_sector_stocks(SECTORS, SNAP, STOCK_SECTORS)
+    elec = next(s for s in out if s["name"] == "전기·전자")
+    assert [x["name"] for x in elec["stocks"]] == ["삼성전자", "SK하이닉스"]
+    assert elec["stocks"][0]["net_eok"] == 800.0
+    assert elec["members_with_data"] == 2
+
+    batt = next(s for s in out if s["name"] == "2차전지")
+    # 순매도도 절대값 큰 순으로 (돈이 크게 빠진 종목이 먼저)
+    assert [x["name"] for x in batt["stocks"]] == ["LG에너지솔루션", "삼성SDI"]
+    assert batt["stocks"][0]["net_eok"] == -500.0
+
+
+def test_index_rows_get_no_stocks():
+    """'종합' 같은 지수·규모구분에는 구성종목이라는 게 없다."""
+    out = A.attach_sector_stocks(SECTORS, SNAP, STOCK_SECTORS)
+    total = next(s for s in out if s["name"] == "종합")
+    assert total["stocks"] == []
+    assert total["members_with_data"] == 0
+
+
+def test_sector_stocks_keep_original_fields():
+    out = A.attach_sector_stocks(SECTORS, SNAP, STOCK_SECTORS)
+    elec = next(s for s in out if s["name"] == "전기·전자")
+    assert elec["chg_pct"] == 1.2 and elec["amount_share"] == 20.0
+
+
+def test_analyze_attaches_sectors_only_when_mapping_given():
+    plain = A.analyze(SNAP, THEMES, STOCK_THEMES, theme_source="테스트")
+    assert "stocks" not in (plain["sectors"][0] if plain["sectors"] else {"stocks": None})
+
+    snap = {**SNAP, "market": {**SNAP["market"], "sectors": SECTORS}}
+    rich = A.analyze(snap, THEMES, STOCK_THEMES, theme_source="테스트",
+                     stock_sectors=STOCK_SECTORS)
+    elec = next(s for s in rich["sectors"] if s["name"] == "전기·전자")
+    assert len(elec["stocks"]) == 2
 
 
 def test_analyze_end_to_end_shape():

@@ -158,9 +158,10 @@ def merge_contained_themes(rows: list[dict]) -> list[dict]:
 
 # ---------------------------------------------------------------- 자금 이동
 def compute_rotation(
-    today: list[dict], previous: list[dict] | None, *, top_n: int = 5
+    today: list[dict], previous: list[dict] | None, *, top_n: int | None = None
 ) -> dict:
     """전 거래일 대비 테마별 순매수 증감으로 자금 이동을 추정한다."""
+    top_n = config.ROTATION_TOP_THEMES if top_n is None else top_n
     if not previous:
         return {"available": False, "inflow": [], "outflow": [], "pairs": [], "note": ""}
 
@@ -209,7 +210,7 @@ def compute_rotation(
         "available": True,
         "inflow": inflow,
         "outflow": outflow,
-        "pairs": pairs[:8],
+        "pairs": pairs[: config.ROTATION_MAX_PAIRS],
         "note": "전 거래일 대비 테마별 순매수 증감을 크기순으로 짝지은 추정입니다. "
         "같은 자금이 실제로 이동했다는 뜻은 아닙니다.",
     }
@@ -256,6 +257,48 @@ def find_spikes(snapshot: dict, stock_themes: dict[str, list[str]]) -> list[dict
         )
     out.sort(key=lambda r: -r["vol_increase_pct"])
     return out[: config.TOP_MOVERS]
+
+
+# ---------------------------------------------------------------- 업종 구성종목
+def attach_sector_stocks(
+    sectors: list[dict], snapshot: dict, stock_sectors: dict[str, str]
+) -> list[dict]:
+    """업종별로 수급이 잡힌 종목을 순매수 크기순으로 붙인다.
+
+    업종시세 API 는 지수만 주고 구성종목을 주지 않는다. 종목-업종 매핑은
+    코스피 종목 마스터에서 가져온다 (masters.load_stock_sectors).
+
+    '종합' '대형주' '고배당50' 'VKOSPI' 처럼 업종이 아닌 항목에는 아무것도
+    안 붙는다. 원래 구성종목이라는 게 없는 지수·규모구분이다.
+    """
+    by_sector: dict[str, list[dict]] = {}
+    for r in snapshot["flows"]:
+        code = stock_sectors.get(r["code"])
+        if code:
+            by_sector.setdefault(code, []).append(r)
+
+    out = []
+    for s in sectors:
+        members = by_sector.get(s.get("code") or "", [])
+        members.sort(key=lambda m: -abs(m["net"]))
+        out.append(
+            {
+                **s,
+                "members_with_data": len(members),
+                "stocks": [
+                    {
+                        "code": m["code"],
+                        "name": m["name"],
+                        "net_eok": to_eok(m["net"]),
+                        "foreign_eok": to_eok(m["frgn"]),
+                        "institution_eok": to_eok(m["orgn"]),
+                        "chg_pct": m["chg_pct"],
+                    }
+                    for m in members[: config.SECTOR_STOCKS]
+                ],
+            }
+        )
+    return out
 
 
 # ---------------------------------------------------------------- 헤드라인
@@ -318,6 +361,7 @@ def analyze(
     previous_themes: list[dict] | None = None,
     history_themes: list[list[dict]] | None = None,
     theme_source: str = "",
+    stock_sectors: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     investors = summarize_investors(snapshot)
     theme_rows = rollup_themes(snapshot, themes)
@@ -362,6 +406,8 @@ def analyze(
     ]
 
     sectors = sorted(market.get("sectors", []), key=lambda s: -s["chg_pct"])
+    if stock_sectors:
+        sectors = attach_sector_stocks(sectors, snapshot, stock_sectors)
 
     return {
         "date": snapshot["date"],
