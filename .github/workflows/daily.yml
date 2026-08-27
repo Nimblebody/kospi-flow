@@ -13,6 +13,13 @@ on:
         default: final
         type: choice
         options: [flash, final]
+      date:
+        # 손으로 돌릴 때 지난 거래일을 다시 만들 수 있게. 장중이거나 장 시작 전에
+        # 그냥 돌리면 그날 수급이 아직 없어서 리포트가 안 나온다.
+        description: "YYYYMMDD (비우면 오늘, KST)"
+        required: false
+        default: ""
+        type: string
 
 # GitHub Actions 크론은 혼잡하면 5~30분 늦게 시작할 수 있습니다.
 # 정시 실행이 꼭 필요하면 시간을 앞당겨 잡으세요.
@@ -86,7 +93,12 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           SITE_URL: ${{ vars.SITE_URL }}
-        run: python main.py --stage "${{ steps.stage.outputs.value }}"
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            python main.py --stage "${{ steps.stage.outputs.value }}" --date "${{ inputs.date }}"
+          else
+            python main.py --stage "${{ steps.stage.outputs.value }}"
+          fi
 
       - name: 리포트 커밋
         run: |

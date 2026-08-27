@@ -125,6 +125,18 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
             if not row["name"]:
                 row["name"] = names.get(row["code"], row["code"])
 
+        # 국내가 비었으면 여기서 멈춘다. 미국까지 1분 더 긁고 나서 죽을 이유가 없다.
+        if not snapshot["flows"]:
+            log.error(
+                "%s 수급 데이터가 비어 있습니다. 리포트를 만들지 않습니다.\n"
+                "  장이 끝나기 전이면 그날 수급은 아직 없습니다. "
+                "KST 16:00 이전이거나 휴장일이면 정상입니다.\n"
+                "  지난 거래일을 다시 만들려면 --date 20260827 처럼 날짜를 주세요 "
+                "(Actions 에서는 Run workflow 의 date 칸).",
+                date,
+            )
+            sys.exit(1)
+
         # 미국증시는 곁들이는 자리다. 여기서 넘어져도 국내 리포트는 그대로 나간다.
         try:
             from src import overseas
