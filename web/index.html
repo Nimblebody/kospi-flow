@@ -18,6 +18,8 @@
    한국 시장 관행에 맞춰 상승·순매수 = 빨강, 하락·순매도 = 파랑.
    두 색은 검증된 diverging 쌍(blue ↔ red)이고 중립은 회색이다. */
 :root {
+  /* 글자 크기 배율. 설정에서 #main 에만 씌우므로 헤더 chrome 은 그대로 둔다. */
+  --fs: 1;
   color-scheme: light;
   --ground:      #f6f6f4;
   --surface:     #ffffff;
@@ -75,12 +77,15 @@
 }
 
 * { box-sizing: border-box; }
+/* .refresh(grid) · .sheet(flex) 처럼 display 를 지정한 요소는 hidden 속성만으로
+   안 숨는다. 지정한 display 가 hidden 의 display:none 을 이긴다. */
+[hidden] { display: none !important; }
 body {
   margin: 0;
   background: var(--ground);
   color: var(--ink);
   font-family: "IBM Plex Sans KR", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
-  font-size: 15px;
+  font-size: calc(15px * var(--fs));
   line-height: 1.5;
   -webkit-text-size-adjust: 100%;
   -webkit-font-smoothing: antialiased;
@@ -98,8 +103,8 @@ header {
   padding-top: env(safe-area-inset-top);
 }
 .head-in { max-width: 520px; margin: 0 auto; padding: 11px 14px 9px; display: flex; align-items: baseline; gap: 9px; }
-.brand { font-weight: 700; font-size: 16px; letter-spacing: -.01em; }
-.head-date { font-size: 12.5px; color: var(--ink-2); margin-left: auto; }
+.brand { font-weight: 700; font-size: calc(16px * var(--fs)); letter-spacing: -.01em; }
+.head-date { font-size: calc(12.5px * var(--fs)); color: var(--ink-2); margin-left: auto; }
 .head-date select {
   font: inherit; color: inherit; background: var(--surface); cursor: pointer;
   border: 1px solid var(--line); border-radius: 6px; padding: 2px 5px;
@@ -107,7 +112,7 @@ header {
 .head-date select:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
 .refresh {
   align-self: center; flex: none; width: 26px; height: 26px; padding: 0;
-  font: inherit; font-size: 13px; line-height: 1; color: var(--ink-2);
+  font: inherit; font-size: calc(13px * var(--fs)); line-height: 1; color: var(--ink-2);
   background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
   cursor: pointer; display: grid; place-items: center;
 }
@@ -116,14 +121,51 @@ header {
 .refresh.spin > span { display: block; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .refresh.spin > span { animation: none; } }
+/* ── 설정 (글자 크기) ── */
+.sheet {
+  max-width: 520px; margin: 0 auto; padding: 9px 14px 11px;
+  border-top: 1px solid var(--line-soft);
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px;
+}
+.sheet-label { font-size: calc(12px * var(--fs)); color: var(--ink-2); }
+.stepper { display: flex; align-items: center; gap: 2px; }
+.stepper button {
+  width: 26px; height: 26px; padding: 0; font: inherit; font-size: calc(15px * var(--fs));
+  line-height: 1; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); cursor: pointer; display: grid; place-items: center;
+}
+.stepper button:first-child { border-radius: 7px 0 0 7px; }
+.stepper button:last-child { border-radius: 0 7px 7px 0; }
+.stepper button:disabled { color: var(--ink-3); cursor: default; }
+.stepper button:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+.stepper .val {
+  min-width: 46px; text-align: center; font-size: calc(12px * var(--fs)); color: var(--ink-2);
+  border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  align-self: stretch; display: grid; place-items: center;
+}
+/* 지금 고른 크기로 실제 본문 글자가 어떻게 보이는지 */
+.sample {
+  margin-left: auto; display: flex; align-items: baseline; gap: 7px;
+  padding: 3px 10px; border-radius: 8px; background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+}
+.sample b { font-weight: 500; line-height: 1.25; }   /* 크기는 JS 가 px 로 넣는다 */
+.sample span { font-size: calc(10.5px * var(--fs)); color: var(--ink-3); white-space: nowrap; }
+.reset {
+  font: inherit; font-size: calc(11.5px * var(--fs)); color: var(--ink-2);
+  background: none; border: 1px solid var(--line); border-radius: 7px;
+  padding: 3px 8px; cursor: pointer;
+}
+.reset:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+
 /* 요약만 있는 과거 날짜에 붙는 안내 */
 .thin-note {
   margin: 0 0 11px; padding: 8px 10px; border-radius: 8px;
   background: var(--surface-2); border: 1px solid var(--line-soft);
-  font-size: 11.5px; color: var(--ink-2); line-height: 1.55;
+  font-size: calc(11.5px * var(--fs)); color: var(--ink-2); line-height: 1.55;
 }
 .badge {
-  font-size: 10.5px; font-weight: 600; letter-spacing: .04em;
+  font-size: calc(10.5px * var(--fs)); font-weight: 600; letter-spacing: .04em;
   padding: 2px 7px; border-radius: 999px;
   border: 1px solid var(--line); color: var(--ink-2); background: var(--surface);
   white-space: nowrap;
@@ -137,7 +179,7 @@ nav.tabs {
 nav.tabs::-webkit-scrollbar { display: none; }
 nav.tabs button {
   flex: 0 0 auto; border: 0; background: none; cursor: pointer;
-  font: inherit; font-size: 13.5px; font-weight: 500; color: var(--ink-3);
+  font: inherit; font-size: calc(13.5px * var(--fs)); font-weight: 500; color: var(--ink-3);
   padding: 6px 11px; border-radius: 8px; white-space: nowrap;
 }
 nav.tabs button[aria-selected="true"] { color: var(--ink); background: var(--surface); box-shadow: var(--shadow); font-weight: 600; }
@@ -149,15 +191,15 @@ nav.tabs button:focus-visible { outline: 2px solid var(--down); outline-offset: 
   border-radius: 14px; padding: 14px; margin-top: 12px; box-shadow: var(--shadow);
 }
 .card > h2 {
-  margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: .01em;
+  margin: 0 0 2px; font-size: calc(13px * var(--fs)); font-weight: 600; letter-spacing: .01em;
   color: var(--ink); display: flex; align-items: center; gap: 8px;
 }
-.card > .sub { margin: 0 0 12px; font-size: 11.5px; color: var(--ink-3); line-height: 1.45; }
+.card > .sub { margin: 0 0 12px; font-size: calc(11.5px * var(--fs)); color: var(--ink-3); line-height: 1.45; }
 .card > h2 + .list, .card > h2 + .grid, .card > h2 + .flowlist { margin-top: 12px; }
 
 /* ── 헤드라인 ────────────────────────────────────────── */
 .headline { display: flex; flex-direction: column; gap: 7px; }
-.headline li { list-style: none; font-size: 14px; line-height: 1.45; color: var(--ink); display: flex; gap: 8px; }
+.headline li { list-style: none; font-size: calc(14px * var(--fs)); line-height: 1.45; color: var(--ink); display: flex; gap: 8px; }
 .headline li::before { content: ""; flex: 0 0 3px; border-radius: 2px; background: var(--mid); align-self: stretch; }
 .headline li:first-child::before { background: var(--accent); }
 ul.headline { margin: 0; padding: 0; }
@@ -165,10 +207,10 @@ ul.headline { margin: 0; padding: 0; }
 /* ── 지수 타일 ───────────────────────────────────────── */
 .idx { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .idx .tile { border: 1px solid var(--line-soft); border-radius: 11px; padding: 11px 12px; background: var(--surface-2); }
-.idx .name { font-size: 11.5px; color: var(--ink-2); font-weight: 500; }
-.idx .val { font-size: 23px; font-weight: 600; letter-spacing: -.02em; margin-top: 1px; }
-.idx .chg { font-size: 12.5px; font-weight: 500; margin-top: 1px; }
-.idx .adline { display: flex; align-items: center; gap: 5px; margin-top: 8px; font-size: 10.5px; color: var(--ink-3); }
+.idx .name { font-size: calc(11.5px * var(--fs)); color: var(--ink-2); font-weight: 500; }
+.idx .val { font-size: calc(23px * var(--fs)); font-weight: 600; letter-spacing: -.02em; margin-top: 1px; }
+.idx .chg { font-size: calc(12.5px * var(--fs)); font-weight: 500; margin-top: 1px; }
+.idx .adline { display: flex; align-items: center; gap: 5px; margin-top: 8px; font-size: calc(10.5px * var(--fs)); color: var(--ink-3); }
 .idx .adbar { flex: 1; height: 4px; border-radius: 2px; background: var(--mid); overflow: hidden; display: flex; }
 .idx .adbar i { display: block; height: 100%; }
 
@@ -179,8 +221,8 @@ ul.headline { margin: 0; padding: 0; }
 /* ── 투자자 3인방 ────────────────────────────────────── */
 .inv { display: flex; flex-direction: column; gap: 9px; }
 .inv .row { display: grid; grid-template-columns: 52px 1fr 84px; align-items: center; gap: 9px; }
-.inv .who { font-size: 12.5px; color: var(--ink-2); font-weight: 500; }
-.inv .amt { text-align: right; font-size: 13px; font-weight: 600; }
+.inv .who { font-size: calc(12.5px * var(--fs)); color: var(--ink-2); font-weight: 500; }
+.inv .amt { text-align: right; font-size: calc(13px * var(--fs)); font-weight: 600; }
 
 /* 0을 가운데 두는 발산형 막대 */
 .dv { position: relative; height: 16px; }
@@ -207,11 +249,11 @@ ul.headline { margin: 0; padding: 0; }
 }
 .trow > button:focus-visible { outline: 2px solid var(--down); outline-offset: -2px; border-radius: 6px; }
 .trow .l1 { display: flex; align-items: baseline; gap: 7px; }
-.trow .tname { font-size: 14px; font-weight: 600; letter-spacing: -.01em; }
-.trow .amt { margin-left: auto; font-size: 13.5px; font-weight: 600; }
-.trow .meta { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--ink-3); flex-wrap: wrap; }
+.trow .tname { font-size: calc(14px * var(--fs)); font-weight: 600; letter-spacing: -.01em; }
+.trow .amt { margin-left: auto; font-size: calc(13.5px * var(--fs)); font-weight: 600; }
+.trow .meta { display: flex; align-items: center; gap: 6px; font-size: calc(10.5px * var(--fs)); color: var(--ink-3); flex-wrap: wrap; }
 .chip {
-  font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 5px;
+  font-size: calc(10px * var(--fs)); font-weight: 600; padding: 1px 6px; border-radius: 5px;
   background: var(--surface-2); border: 1px solid var(--line-soft); color: var(--ink-2);
 }
 .chip.hot { color: var(--up); background: var(--up-soft); border-color: color-mix(in srgb, var(--up) 30%, var(--line-soft)); }
@@ -219,31 +261,31 @@ ul.headline { margin: 0; padding: 0; }
 
 .members { display: none; padding: 2px 0 11px; }
 .trow[data-open="1"] .members { display: block; }
-.members table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.members th { text-align: right; font-weight: 500; color: var(--ink-3); font-size: 10.5px; padding: 3px 0; }
+.members table { width: 100%; border-collapse: collapse; font-size: calc(12px * var(--fs)); }
+.members th { text-align: right; font-weight: 500; color: var(--ink-3); font-size: calc(10.5px * var(--fs)); padding: 3px 0; }
 .members th:first-child { text-align: left; }
 .members td { padding: 4px 0; border-top: 1px solid var(--line-soft); text-align: right; }
 .members td:first-child { text-align: left; color: var(--ink); }
-.members .sc { color: var(--ink-3); font-size: 10.5px; margin-left: 4px; }
+.members .sc { color: var(--ink-3); font-size: calc(10.5px * var(--fs)); margin-left: 4px; }
 .members .merged {
   margin: 9px 0 0; padding: 7px 9px; border-radius: 7px;
   background: var(--surface-2); border: 1px solid var(--line-soft);
-  font-size: 11px; color: var(--ink-2); line-height: 1.55;
+  font-size: calc(11px * var(--fs)); color: var(--ink-2); line-height: 1.55;
 }
-.members .merged b { display: block; color: var(--ink-3); font-size: 10px;
+.members .merged b { display: block; color: var(--ink-3); font-size: calc(10px * var(--fs));
   font-weight: 500; margin-bottom: 3px; }
-.caret { color: var(--ink-3); font-size: 11px; transition: transform .16s ease; display: inline-block; }
+.caret { color: var(--ink-3); font-size: calc(11px * var(--fs)); transition: transform .16s ease; display: inline-block; }
 .trow[data-open="1"] .caret { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .caret { transition: none; } }
 
 /* ── 자금 이동 ───────────────────────────────────────── */
 .flowlist { display: flex; flex-direction: column; gap: 10px; }
 .flow { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; }
-.flow .pair { display: flex; align-items: center; gap: 7px; font-size: 13.5px; min-width: 0; }
+.flow .pair { display: flex; align-items: center; gap: 7px; font-size: calc(13.5px * var(--fs)); min-width: 0; }
 .flow .from { color: var(--down); font-weight: 600; }
 .flow .to { color: var(--up); font-weight: 600; }
 .flow .arw { color: var(--ink-3); flex: 0 0 auto; }
-.flow .amt { font-size: 13px; font-weight: 600; color: var(--ink); }
+.flow .amt { font-size: calc(13px * var(--fs)); font-weight: 600; color: var(--ink); }
 .flow .track { grid-column: 1 / -1; height: 5px; border-radius: 3px; background: var(--mid); overflow: hidden; }
 .flow .track i { display: block; height: 100%; border-radius: 3px; background: linear-gradient(90deg, var(--down), var(--up)); }
 
@@ -253,8 +295,8 @@ ul.headline { margin: 0; padding: 0; }
   border: 1px solid var(--line-soft); border-radius: 9px; padding: 8px 8px 7px;
   min-height: 58px; display: flex; flex-direction: column; justify-content: space-between;
 }
-.cell .cn { font-size: 11px; font-weight: 500; line-height: 1.25; }
-.cell .cv { font-size: 13.5px; font-weight: 600; }
+.cell .cn { font-size: calc(11px * var(--fs)); font-weight: 500; line-height: 1.25; }
+.cell .cv { font-size: calc(13.5px * var(--fs)); font-weight: 600; }
 /* 구성 종목이 있는 칸만 누를 수 있다 */
 button.cell {
   font: inherit; text-align: left; cursor: pointer;
@@ -266,44 +308,44 @@ button.cell[aria-expanded="true"] {
 }
 .secdet { margin-top: 10px; }
 .secdet h3 {
-  margin: 0 0 2px; font-size: 13px; font-weight: 600; letter-spacing: -.01em;
+  margin: 0 0 2px; font-size: calc(13px * var(--fs)); font-weight: 600; letter-spacing: -.01em;
   display: flex; align-items: baseline; gap: 7px;
 }
-.secdet h3 .num { margin-left: auto; font-size: 12.5px; }
+.secdet h3 .num { margin-left: auto; font-size: calc(12.5px * var(--fs)); }
 .secdet .sub { margin: 0 0 7px; }
 
 /* ── 종목 리스트 ─────────────────────────────────────── */
 .srow { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
 .srow:first-child { border-top: 0; }
-.srow .sn { font-size: 13.5px; font-weight: 600; letter-spacing: -.01em; }
-.srow .sa { font-size: 13px; font-weight: 600; text-align: right; }
-.srow .sm { font-size: 10.5px; color: var(--ink-3); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.srow .sd { font-size: 10.5px; text-align: right; }
+.srow .sn { font-size: calc(13.5px * var(--fs)); font-weight: 600; letter-spacing: -.01em; }
+.srow .sa { font-size: calc(13px * var(--fs)); font-weight: 600; text-align: right; }
+.srow .sm { font-size: calc(10.5px * var(--fs)); color: var(--ink-3); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.srow .sd { font-size: calc(10.5px * var(--fs)); text-align: right; }
 .split { grid-column: 1 / -1; display: flex; height: 4px; border-radius: 2px; overflow: hidden; background: var(--mid); margin-top: 3px; gap: 2px; }
 .split i { display: block; height: 100%; border-radius: 2px; }
 
 /* ── 기타 ───────────────────────────────────────────── */
-.legend { display: flex; gap: 12px; font-size: 10.5px; color: var(--ink-3); margin-top: 10px; flex-wrap: wrap; }
+.legend { display: flex; gap: 12px; font-size: calc(10.5px * var(--fs)); color: var(--ink-3); margin-top: 10px; flex-wrap: wrap; }
 .legend span { display: inline-flex; align-items: center; gap: 4px; }
 .legend i { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
-.note { font-size: 11px; color: var(--ink-3); line-height: 1.5; margin-top: 10px; }
-.empty { font-size: 12.5px; color: var(--ink-3); padding: 14px 0; text-align: center; }
+.note { font-size: calc(11px * var(--fs)); color: var(--ink-3); line-height: 1.5; margin-top: 10px; }
+.empty { font-size: calc(12.5px * var(--fs)); color: var(--ink-3); padding: 14px 0; text-align: center; }
 .panel { display: none; }
 .panel.on { display: block; }
-footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 1.6; text-align: center; }
+footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink-3); line-height: 1.6; text-align: center; }
 .tablebtn {
-  margin-top: 10px; font: inherit; font-size: 11.5px; color: var(--ink-2);
+  margin-top: 10px; font: inherit; font-size: calc(11.5px * var(--fs)); color: var(--ink-2);
   background: none; border: 1px solid var(--line); border-radius: 7px;
   padding: 4px 9px; cursor: pointer;
 }
 .tablebtn:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
 .tablewrap { overflow-x: auto; margin-top: 10px; display: none; }
 .tablewrap.on { display: block; }
-.tablewrap table { width: 100%; min-width: 420px; border-collapse: collapse; font-size: 11.5px; }
+.tablewrap table { width: 100%; min-width: 420px; border-collapse: collapse; font-size: calc(11.5px * var(--fs)); }
 .tablewrap th, .tablewrap td { padding: 5px 8px; border-bottom: 1px solid var(--line-soft); text-align: right; white-space: nowrap; }
 .tablewrap th { color: var(--ink-3); font-weight: 500; text-align: right; }
 .tablewrap th:first-child, .tablewrap td:first-child { text-align: left; }
-.loading { padding: 60px 0; text-align: center; color: var(--ink-3); font-size: 13px; }
+.loading { padding: 60px 0; text-align: center; color: var(--ink-3); font-size: calc(13px * var(--fs)); }
 </style>
 </head>
 <body>
@@ -314,6 +356,7 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
     <span class="head-date num" id="date">—</span>
     <span class="head-date" id="datepick" hidden><select id="datesel" aria-label="날짜 선택"></select></span>
     <button type="button" class="refresh" id="refresh" title="새로고침" aria-label="새로고침" hidden><span>↻</span></button>
+    <button type="button" class="refresh" id="gear" title="설정" aria-label="설정" aria-expanded="false" aria-controls="settings"><span>⚙</span></button>
   </div>
   <nav class="tabs" id="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-panel="p-sum">요약</button>
@@ -322,6 +365,16 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
     <button role="tab" aria-selected="false" data-panel="p-stock">종목</button>
     <button role="tab" aria-selected="false" data-panel="p-sector">업종</button>
   </nav>
+  <div class="sheet" id="settings" hidden>
+    <span class="sheet-label" id="fs-label">글자 크기</span>
+    <div class="stepper" role="group" aria-labelledby="fs-label">
+      <button type="button" id="fs-down" aria-label="글자 작게">−</button>
+      <span class="val num" id="fs-val" aria-live="polite">100%</span>
+      <button type="button" id="fs-up" aria-label="글자 크게">+</button>
+    </div>
+    <button type="button" class="reset" id="fs-reset">기본값</button>
+    <div class="sample"><b id="fs-sample">가</b><span id="fs-px">15px</span></div>
+  </div>
 </header>
 
 <main class="wrap" id="main">
@@ -759,6 +812,47 @@ footer { margin-top: 16px; font-size: 10.5px; color: var(--ink-3); line-height: 
   /* ── 부트스트랩 ───────────────────────────────────── */
   var boot = null;
   try { boot = JSON.parse(document.getElementById("bootstrap").textContent); } catch (e) { boot = null; }
+
+  /* ── 설정: 글자 크기 ───────────────────────────────
+     배율은 #main 에만 씌운다. 헤더·설정 패널까지 같이 커지면 좁은 화면에서
+     제목과 버튼이 밀려 나가서, 내용 글자만 키우는 쪽이 쓸모 있다.
+     본문 기준은 15px(body). 견본 글자를 그 실제 크기로 보여 준다. */
+  var FS_BASE = 15, FS_MIN = 85, FS_MAX = 160, FS_STEP = 5;
+  var fsPct = 100;
+
+  function readFs() {
+    try {
+      var v = parseInt(localStorage.getItem("fs"), 10);
+      if (v >= FS_MIN && v <= FS_MAX) return v;
+    } catch (e) {}
+    return 100;
+  }
+
+  function applyFs(pct, save) {
+    fsPct = Math.min(FS_MAX, Math.max(FS_MIN, pct));
+    var px = Math.round(FS_BASE * fsPct / 10) / 10;   // 15px * 배율, 소수 한 자리
+
+    document.getElementById("main").style.setProperty("--fs", fsPct / 100);
+    document.getElementById("fs-val").textContent = fsPct + "%";
+    document.getElementById("fs-sample").style.fontSize = px + "px";
+    document.getElementById("fs-px").textContent = px + "px";
+    document.getElementById("fs-down").disabled = fsPct <= FS_MIN;
+    document.getElementById("fs-up").disabled = fsPct >= FS_MAX;
+
+    if (save) { try { localStorage.setItem("fs", String(fsPct)); } catch (e) {} }
+  }
+
+  document.getElementById("gear").addEventListener("click", function () {
+    var box = document.getElementById("settings");
+    var open = box.hidden;
+    box.hidden = !open;
+    this.setAttribute("aria-expanded", open ? "true" : "false");
+  });
+  document.getElementById("fs-down").addEventListener("click", function () { applyFs(fsPct - FS_STEP, true); });
+  document.getElementById("fs-up").addEventListener("click", function () { applyFs(fsPct + FS_STEP, true); });
+  document.getElementById("fs-reset").addEventListener("click", function () { applyFs(100, true); });
+
+  applyFs(readFs(), false);
 
   /* ── 새로고침 ──────────────────────────────────────
      지금 보고 있는 날짜를 다시 불러 그린다. 동시에 서비스워커도 확인해서
