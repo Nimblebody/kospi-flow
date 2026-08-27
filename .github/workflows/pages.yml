@@ -1,0 +1,70 @@
+name: 사이트 배포
+
+# 화면(templates/, src/render.py)만 고친 푸시에도 사이트가 바로 바뀌게 한다.
+# 리포트 생성 워크플로는 하루 두 번만 도는데, 그때까지 기다리거나 Run workflow 를
+# 손으로 눌러야 새 화면이 올라가던 걸 없애는 용도.
+#
+# KIS API 는 부르지 않는다. 데이터는 web/data 에 이미 커밋돼 있고
+# main.py --build-only 는 그걸 읽는 껍데기만 다시 만든다.
+#
+# 봇이 GITHUB_TOKEN 으로 올린 리포트 커밋은 워크플로를 다시 트리거하지 않으므로
+# (GitHub 사양) daily.yml 과 서로 물고 도는 일은 없다.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "templates/**"
+      - "src/render.py"
+      - "main.py"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+# daily.yml 과 같은 그룹. 리포트 생성 중이면 끝난 뒤에 배포한다.
+concurrency:
+  group: kospi-flow
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 사이트 빌드
+        run: python main.py --build-only
+
+      - name: 빌드 산출물 커밋
+        run: |
+          git config user.name "kospi-flow bot"
+          git config user.email "actions@github.com"
+          git add web/index.html web/manifest.webmanifest web/sw.js
+          if git diff --staged --quiet; then
+            echo "변경 없음 (로컬에서 이미 빌드해 커밋한 경우)"
+          else
+            git commit -m "사이트 재빌드"
+            git pull --rebase --autostash
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deploy
+        uses: actions/deploy-pages@v4

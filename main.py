@@ -6,6 +6,7 @@
     python main.py --stage final          # 수급 확정 후
     python main.py --sample               # KIS 키 없이 가짜 데이터로 화면만 확인
     python main.py --backfill 14          # 과거 14영업일치를 채워 자금 이동 활성화
+    python main.py --build-only           # API 없이 web/ 정적 파일만 다시 빌드
 
 결과물
     web/data/<YYYY-MM-DD>.json  : 그날 리포트
@@ -178,12 +179,22 @@ def main() -> None:
     )
     p.add_argument("--no-notify", action="store_true", help="텔레그램 알림 끄기")
     p.add_argument(
+        "--build-only",
+        action="store_true",
+        help="KIS 호출 없이 web/ 정적 파일만 다시 만든다 (화면만 고쳤을 때)",
+    )
+    p.add_argument(
         "--backfill",
         type=int,
         metavar="N",
         help="과거 N영업일 리포트를 확정 수급으로 채운다 (자금 이동 표시용)",
     )
     args = p.parse_args()
+
+    # 화면만 고친 경우. 데이터는 web/data 에 이미 있으니 API 를 부를 이유가 없다.
+    if args.build_only:
+        render.build_site()
+        return
 
     if args.backfill:
         backfill(args.date or _default_date(), args.backfill)
