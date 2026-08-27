@@ -59,6 +59,15 @@ def test_slim_keeps_what_rotation_and_streaks_need():
     assert streaks["반도체"] == 2      # 오늘 + 보관본 하루
 
 
+def test_slim_keeps_featured_so_past_dates_rank_the_same():
+    """축약본만 있는 날짜도 최신 화면과 같은 기준으로 테마를 줄 세워야 한다."""
+    s = store.slim({**FULL, "themes": [
+        {"name": "고른테마", "net_eok": 100.0, "featured": True},
+        {"name": "쏠린테마", "net_eok": 900.0, "featured": False},
+    ]})
+    assert [t["featured"] for t in s["themes"]] == [True, False]
+
+
 def test_slim_keeps_the_daily_money_series():
     """돈의 흐름 시계열 — 테마별 외국인·기관 분해와 시장 전체 투자자 합계."""
     s = store.slim(FULL)
@@ -80,6 +89,73 @@ def test_slim_survives_missing_keys():
     s = store.slim({"date": "2026-08-27", "themes": [{"name": "반도체", "net_eok": 1.0}]})
     assert s["date"] == "2026-08-27"
     assert s["themes"] == [{"name": "반도체", "net_eok": 1.0}]
+
+
+# ------------------------------------------------------------ 보관 기간
+def _with_tmp_data(fn):
+    """config.DATA_DIR 을 임시 폴더로 바꿔 실제 파일로 검증한다."""
+    import json as _json
+    import tempfile
+    import config
+
+    with tempfile.TemporaryDirectory() as tmp:
+        orig_dir, orig_days = config.DATA_DIR, config.FULL_REPORT_DAYS
+        config.DATA_DIR = Path(tmp)
+        try:
+            fn(Path(tmp), _json)
+        finally:
+            config.DATA_DIR, config.FULL_REPORT_DAYS = orig_dir, orig_days
+
+
+def test_retention_keeps_recent_full_and_slims_the_rest():
+    def body(tmp, _json):
+        import config
+        config.FULL_REPORT_DAYS = 2
+
+        for day in ("2026-08-25", "2026-08-26", "2026-08-27"):
+            store.save_report({**FULL, "date": day}, make_latest=False)
+
+        # 최근 2일은 전체본, 그 앞은 축약본
+        for day, expect_full in (("2026-08-27", True), ("2026-08-26", True),
+                                 ("2026-08-25", False)):
+            rep = _json.loads((tmp / f"{day}.json").read_text(encoding="utf-8"))
+            assert store.is_full(rep) is expect_full, day
+
+        idx = _json.loads((tmp / "index.json").read_text(encoding="utf-8"))
+        assert idx["full"] == ["2026-08-27", "2026-08-26"]
+        assert len(idx["dates"]) == 3
+
+    _with_tmp_data(body)
+
+
+def test_retention_does_not_rewrite_already_slim_files():
+    """이미 얇은 파일은 건드리지 않는다. 괜히 커밋 diff 만 생긴다."""
+    def body(tmp, _json):
+        import config
+        config.FULL_REPORT_DAYS = 1
+
+        store.save_report({**FULL, "date": "2026-08-25"}, make_latest=False)
+        store.save_report({**FULL, "date": "2026-08-27"}, make_latest=False)
+        old_path = tmp / "2026-08-25.json"
+        before = old_path.read_bytes()
+        assert not store.is_full(_json.loads(before))       # 이미 축약됨
+
+        store.save_report({**FULL, "date": "2026-08-27"}, make_latest=False)
+        assert old_path.read_bytes() == before              # 그대로
+
+    _with_tmp_data(body)
+
+
+def test_latest_stays_full_even_when_date_file_is_slimmed():
+    def body(tmp, _json):
+        import config
+        config.FULL_REPORT_DAYS = 0        # 전부 축약 대상
+
+        store.save_report({**FULL, "date": "2026-08-27"}, make_latest=True)
+        assert not store.is_full(_json.loads((tmp / "2026-08-27.json").read_text(encoding="utf-8")))
+        assert store.is_full(_json.loads((tmp / "latest.json").read_text(encoding="utf-8")))
+
+    _with_tmp_data(body)
 
 
 if __name__ == "__main__":

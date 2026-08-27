@@ -15,7 +15,12 @@ def report_path(date: str) -> Path:
 
 
 # 날짜별 파일에 남길 테마 필드. 자금 흐름 시계열에 필요한 것만.
-_THEME_KEEP = ("name", "net_eok", "foreign_eok", "institution_eok", "streak")
+# featured 를 남기는 이유 — 축약본만 있는 과거 날짜에서도 화면이 테마 순위를
+# 다시 뽑아야 하는데, 이게 없으면 대형주 하나가 끌고 가는 테마가 상위에 올라와
+# 최신 화면과 순위가 달라진다.
+_THEME_KEEP = (
+    "name", "net_eok", "foreign_eok", "institution_eok", "streak", "featured",
+)
 
 # 날짜별 파일에 남길 최상위 키. themes 는 아래에서 따로 추린다.
 _TOP_KEEP = (
@@ -45,22 +50,55 @@ def _dump(obj: dict) -> str:
     return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))
 
 
+def is_full(report: dict) -> bool:
+    """얇게 줄인 보관본이 아니라 화면을 다 그릴 수 있는 전체본인가."""
+    return "themes_top" in report
+
+
+def apply_retention() -> list[str]:
+    """보관 기간이 지난 리포트를 얇게 줄이고, 전체본이 남은 날짜를 돌려준다.
+
+    이미 커밋된 파일을 나중에 줄여도 .git 은 작아지지 않는다(예전 버전이 남는다).
+    용량이 아니라 '화면에서 되돌아가 볼 수 있는 범위' 를 정하는 일이다.
+    """
+    dates = sorted((p.stem for p in config.DATA_DIR.glob("20*.json")), reverse=True)
+    full: list[str] = []
+    for i, d in enumerate(dates):
+        path = report_path(d)
+        try:
+            rep = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if not is_full(rep):
+            continue
+        if i < config.FULL_REPORT_DAYS:
+            full.append(d)
+        else:
+            path.write_text(_dump(slim(rep)), encoding="utf-8")
+            log.info("보관 기간 경과로 축약: %s", d)
+    return full
+
+
 def save_report(report: dict, *, make_latest: bool = True) -> Path:
-    """날짜별 파일은 얇게, latest.json 은 화면이 쓰는 전체를 저장한다.
+    """전체본으로 저장하고, 보관 기간이 지난 과거분만 얇게 줄인다.
 
     make_latest=False 는 백필용. 과거 리포트가 latest.json 을 덮으면 안 된다.
     """
     path = report_path(report["date"])
-    path.write_text(_dump(slim(report)), encoding="utf-8")
+    path.write_text(_dump(report), encoding="utf-8")
 
     if make_latest:
         (config.DATA_DIR / "latest.json").write_text(_dump(report), encoding="utf-8")
 
-    dates = sorted(
-        (p.stem for p in config.DATA_DIR.glob("20*.json")), reverse=True
-    )
+    full = apply_retention()
+    dates = sorted((p.stem for p in config.DATA_DIR.glob("20*.json")), reverse=True)
     (config.DATA_DIR / "index.json").write_text(
-        json.dumps({"dates": dates[:180]}, ensure_ascii=False), encoding="utf-8"
+        json.dumps(
+            # full: 그날 화면을 통째로 다시 그릴 수 있는 날짜. 나머지는 요약만 있다.
+            {"dates": dates[:180], "full": sorted(full, reverse=True)},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
     )
     log.info("리포트 저장: %s", path)
     return path
