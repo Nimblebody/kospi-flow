@@ -51,8 +51,22 @@ SECTORS = [
     ("XLRE", "부동산"), ("XLU", "유틸리티"), ("SMH", "반도체"),
 ]
 
+# 국내 투자자가 많이 보는 미국 종목. 시가총액 상위와 반도체·AI 축을 함께 담는다.
+# 코스피 반도체 수급이 간밤 이쪽을 따라가는 일이 잦아 그 자리를 두껍게 뒀다.
+WATCH = [
+    ("NVDA", "엔비디아"), ("MSFT", "마이크로소프트"), ("AAPL", "애플"),
+    ("GOOGL", "알파벳"), ("AMZN", "아마존"), ("META", "메타"),
+    ("AVGO", "브로드컴"), ("TSLA", "테슬라"), ("TSM", "TSMC"),
+    ("AMD", "AMD"), ("MU", "마이크론"), ("ASML", "ASML"),
+    ("ARM", "ARM"), ("QCOM", "퀄컴"), ("INTC", "인텔"),
+    ("NFLX", "넷플릭스"), ("PLTR", "팔란티어"), ("COIN", "코인베이스"),
+    ("LLY", "일라이릴리"), ("JPM", "JP모건"),
+]
+
 # NYSE Arca ETF 는 KIS 에서 보통 AMS 로 잡힌다. 아니면 다음 순서로 찾아본다.
 EXCHANGES = ["AMS", "NYS", "NAS"]
+# 개별 종목은 반대로 나스닥이 먼저다. 헛걸음 한 번을 줄인다.
+STOCK_EXCHANGES = ["NAS", "NYS", "AMS"]
 
 
 # ---------------------------------------------------------------- 유틸
@@ -132,11 +146,13 @@ def _fetch_index(kis: KisClient, spec: dict, codes: dict) -> list[tuple[str, flo
     return []
 
 
-def _fetch_etf(kis: KisClient, symbol: str, codes: dict) -> list[tuple[str, float]]:
+def _fetch_stock(
+    kis: KisClient, symbol: str, codes: dict, prefer: list[str] | None = None
+) -> list[tuple[str, float]]:
     """거래소 코드도 같은 방식으로 찾는다."""
     key = f"excd:{symbol}"
     known = codes.get(key)
-    order = list(EXCHANGES)
+    order = list(prefer or EXCHANGES)
     if known:
         order = [known] + [e for e in order if e != known]
 
@@ -170,7 +186,7 @@ def _yield_value(v: float) -> float | None:
 def collect_us(kis: KisClient) -> dict:
     """간밤 미국 증시 한 장. 실패한 항목은 빠지고, 전부 실패하면 빈 dict."""
     codes = _load_codes()
-    out: dict = {"as_of": "", "indices": [], "macro": [], "sectors": []}
+    out: dict = {"as_of": "", "indices": [], "macro": [], "sectors": [], "stocks": []}
     dates: list[str] = []
 
     for spec in INDICES:
@@ -204,11 +220,20 @@ def collect_us(kis: KisClient) -> dict:
         )
 
     for symbol, name in SECTORS:
-        m = _move(_fetch_etf(kis, symbol, codes))
+        m = _move(_fetch_stock(kis, symbol, codes))
         if not m:
             continue
         dates.append(m["date"])
         out["sectors"].append(
+            {"symbol": symbol, "name": name, "value": m["value"], "chg_pct": m["chg_pct"]}
+        )
+
+    for symbol, name in WATCH:
+        m = _move(_fetch_stock(kis, symbol, codes, STOCK_EXCHANGES))
+        if not m:
+            continue
+        dates.append(m["date"])
+        out["stocks"].append(
             {"symbol": symbol, "name": name, "value": m["value"], "chg_pct": m["chg_pct"]}
         )
 
@@ -221,9 +246,11 @@ def collect_us(kis: KisClient) -> dict:
     # 현지 마감일. 항목마다 하루씩 어긋날 수 있어 가장 흔한 날짜를 쓴다.
     out["as_of"] = max(set(dates), key=dates.count) if dates else ""
     out["sectors"].sort(key=lambda s: s["chg_pct"], reverse=True)
+    out["stocks"].sort(key=lambda s: s["chg_pct"], reverse=True)
     log.info(
-        "미국증시 수집: 지수 %d · 매크로 %d · 섹터 %d (현지 %s)",
-        len(out["indices"]), len(out["macro"]), len(out["sectors"]), out["as_of"],
+        "미국증시 수집: 지수 %d · 매크로 %d · 섹터 %d · 종목 %d (현지 %s)",
+        len(out["indices"]), len(out["macro"]), len(out["sectors"]),
+        len(out["stocks"]), out["as_of"],
     )
     return out
 
@@ -247,8 +274,8 @@ def probe(kis: KisClient) -> None:
                 note = f"{'—':>4}  실패: {str(exc)[:38]}"
             print(f"{spec['name']:<14} {spec['div']:<4} {code:<10} {note}")
 
-    for symbol, name in SECTORS:
-        for excd in EXCHANGES:
+    for symbol, name in SECTORS + WATCH[:3]:   # 종목은 대표 3개만 확인
+        for excd in (EXCHANGES if (symbol, name) in SECTORS else STOCK_EXCHANGES):
             rows: list = []
             try:
                 rows = _series(kis.overseas_stock_daily(symbol, excd))

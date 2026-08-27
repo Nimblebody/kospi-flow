@@ -195,6 +195,19 @@ header {
 }
 .badge.final { color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, var(--line)); background: var(--up-soft); }
 
+/* 한국 / 미국. 탭 줄 위에서 시장을 통째로 가른다. */
+.markets { max-width: 520px; margin: 0 auto; padding: 0 14px 7px; display: flex; gap: 5px; }
+.markets button {
+  font: inherit; font-size: calc(12.5px * var(--fs)); font-weight: 600;
+  color: var(--ink-3); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 4px 13px; cursor: pointer;
+}
+.markets button[aria-selected="true"] {
+  color: var(--ground); background: var(--accent); border-color: var(--accent);
+}
+.markets button:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+
 nav.tabs {
   max-width: 520px; margin: 0 auto; padding: 0 8px 8px;
   display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none;
@@ -385,13 +398,19 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
       <button type="button" class="iconbtn" id="gear" title="설정" aria-label="설정" aria-expanded="false" aria-controls="settings"><span>⚙</span></button>
     </span>
   </div>
+  <div class="markets" id="markets" role="tablist" aria-label="시장">
+    <button role="tab" aria-selected="true" data-market="kr">한국</button>
+    <button role="tab" aria-selected="false" data-market="us">미국</button>
+  </div>
   <nav class="tabs" id="tabs" role="tablist">
-    <button role="tab" aria-selected="true" data-panel="p-sum">요약</button>
-    <button role="tab" aria-selected="false" data-panel="p-theme">테마 수급</button>
-    <button role="tab" aria-selected="false" data-panel="p-move">자금 이동</button>
-    <button role="tab" aria-selected="false" data-panel="p-stock">종목</button>
-    <button role="tab" aria-selected="false" data-panel="p-sector">업종</button>
-    <button role="tab" aria-selected="false" data-panel="p-us">미국증시</button>
+    <button role="tab" aria-selected="true" data-market="kr" data-panel="p-sum">요약</button>
+    <button role="tab" aria-selected="false" data-market="kr" data-panel="p-theme">테마 수급</button>
+    <button role="tab" aria-selected="false" data-market="kr" data-panel="p-move">자금 이동</button>
+    <button role="tab" aria-selected="false" data-market="kr" data-panel="p-stock">종목</button>
+    <button role="tab" aria-selected="false" data-market="kr" data-panel="p-sector">업종</button>
+    <button role="tab" aria-selected="false" data-market="us" data-panel="p-us-sum" hidden>요약</button>
+    <button role="tab" aria-selected="false" data-market="us" data-panel="p-us-stock" hidden>종목</button>
+    <button role="tab" aria-selected="false" data-market="us" data-panel="p-us-sector" hidden>섹터</button>
   </nav>
   <div class="sheet" id="settings" hidden>
     <span class="sheet-label" id="fs-label">글자 크기</span>
@@ -481,12 +500,13 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     var main = document.getElementById("main");
     main.innerHTML =
       panelSummary(d) + panelTheme(d) + panelMove(d) + panelStock(d) + panelSector(d) +
-      panelUs(d) +
+      panelUsSummary(d) + panelUsStock(d) + panelUsSector(d) +
       '<footer>테마 분류: ' + esc(d.theme_source || "—") + '<br>' +
       '수집 ' + esc((d.collected_at || "").replace("T", " ").slice(0, 16)) + ' · ' +
       '투자 판단의 근거로 쓰기 전에 원 데이터를 확인하세요.</footer>';
 
     wire();
+    syncNav();
   }
 
   /* ── 1. 요약 ──────────────────────────────────────── */
@@ -780,16 +800,44 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     return h + "</section>";
   }
 
-  /* ── 6. 미국증시 ──────────────────────────────────── */
-  function panelUs(d) {
-    var u = d.us || null;
-    var h = '<section class="panel" id="p-us">';
-    if (!u || !((u.indices || []).length || (u.sectors || []).length)) {
-      return h + '<div class="card"><div class="empty">' +
-        '간밤 미국 증시 데이터가 없습니다.</div></div></section>';
-    }
+  /* ── 6. 미국: 요약 ────────────────────────────────── */
+  function usEmpty(id) {
+    return '<section class="panel" id="' + id + '">' +
+      '<div class="card"><div class="empty">간밤 미국 증시 데이터가 없습니다.</div></div>' +
+      '</section>';
+  }
 
-    /* 지수 + 매크로 */
+  function usHeadline(u) {
+    var out = [];
+    var lead = (u.indices || []).slice().sort(function (a, b) {
+      return Math.abs(b.chg_pct) - Math.abs(a.chg_pct);
+    })[0];
+    if (lead) out.push(lead.name + " " + pct(lead.chg_pct) + "로 가장 크게 움직였습니다.");
+
+    var sec = u.sectors || [];
+    if (sec.length) {
+      var up = sec.filter(function (x) { return x.chg_pct > 0; }).length;
+      out.push("섹터 " + sec.length + "개 중 " + up + "개 상승 · 1위 " +
+               sec[0].name + " " + pct(sec[0].chg_pct) +
+               " / 꼴찌 " + sec[sec.length - 1].name + " " + pct(sec[sec.length - 1].chg_pct) + ".");
+    }
+    var st = u.stocks || [];
+    if (st.length) {
+      out.push("종목 1위 " + st[0].name + " " + pct(st[0].chg_pct) +
+               " · 최하위 " + st[st.length - 1].name + " " + pct(st[st.length - 1].chg_pct) + ".");
+    }
+    return out;
+  }
+
+  function panelUsSummary(d) {
+    var u = d.us || null;
+    if (!u || !((u.indices || []).length || (u.sectors || []).length)) return usEmpty("p-us-sum");
+    var h = '<section class="panel" id="p-us-sum">';
+
+    h += '<div class="card"><ul class="headline">' +
+         usHeadline(u).map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") +
+         '</ul></div>';
+
     h += '<div class="card"><h2>간밤 미국 마감</h2>' +
          '<p class="sub">현지 ' + esc(u.as_of || "—") + ' 종가 기준. ' +
          '국내 리포트가 나가는 시각에는 미국 장이 아직 열리기 전입니다.</p>' +
@@ -823,28 +871,76 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     }
     h += '</div>';
 
-    /* 섹터 히트맵 */
-    var s = u.sectors || [];
-    if (s.length) {
-      var span = Math.max.apply(null, s.map(function (x) { return Math.abs(x.chg_pct); }).concat([0.5]));
-      h += '<div class="card"><h2>섹터</h2>' +
-           '<p class="sub">SPDR 섹터 ETF 등락률. 색이 진할수록 변동이 큽니다. ' +
-           '빨강 상승 / 파랑 하락.</p><div class="grid">';
-      s.forEach(function (x) {
-        h += '<div class="cell" style="' + heatStyle(x.chg_pct, span) + '">' +
-             '<span class="cn">' + esc(x.name) + '</span>' +
-             '<span class="cv num ' + cls(x.chg_pct) + '">' + pct(x.chg_pct) + '</span></div>';
-      });
-      h += '</div>' +
-        '<button class="tablebtn" data-table="tbl-us">표로 보기</button>' +
-        '<div class="tablewrap" id="tbl-us"><table><thead><tr><th>섹터</th><th>티커</th><th>등락률</th><th>종가</th></tr></thead><tbody>' +
-        s.map(function (x) {
-          return '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.symbol) + '</td>' +
-                 '<td class="num ' + cls(x.chg_pct) + '">' + x.chg_pct.toFixed(2) + '%</td>' +
-                 '<td class="num">' + x.value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</td></tr>';
-        }).join("") + '</tbody></table></div></div>';
-    }
+    // 국내와 화면 구성이 다른 이유를 화면 안에서 밝힌다.
+    h += '<div class="card"><p class="thin-note">' +
+         '미국은 거래소가 투자자별(외국인·기관·개인) 일별 매매동향을 공표하지 않습니다. ' +
+         '그래서 테마 수급·자금 이동은 국내와 같은 의미로 만들 수 없고, ' +
+         '여기서는 지수·섹터·종목의 가격 움직임까지만 보여줍니다.' +
+         '</p></div>';
 
+    return h + "</section>";
+  }
+
+  /* ── 7. 미국: 종목 ────────────────────────────────── */
+  function usRows(rows) {
+    if (!rows.length) return '<div class="empty">데이터 없음</div>';
+    return rows.map(function (s) {
+      return '<div class="srow">' +
+        '<span class="sn">' + esc(s.name) + '</span>' +
+        '<span class="sa num ' + cls(s.chg_pct) + '">' + pct(s.chg_pct) + '</span>' +
+        '<span class="sm"><span class="chip">' + esc(s.symbol) + '</span></span>' +
+        '<span class="sd num">$' + s.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</span>' +
+        '</div>';
+    }).join("");
+  }
+
+  function panelUsStock(d) {
+    var u = d.us || null;
+    var st = (u && u.stocks) || [];
+    if (!st.length) return usEmpty("p-us-stock");
+
+    var up = st.filter(function (x) { return x.chg_pct > 0; });
+    var down = st.filter(function (x) { return x.chg_pct < 0; }).reverse();
+
+    var h = '<section class="panel" id="p-us-stock">';
+    h += '<div class="card"><h2>상승</h2>' +
+         '<p class="sub">국내 투자자가 많이 보는 ' + st.length + '종목 기준 · 현지 ' + esc(u.as_of || "—") + ' 종가</p>' +
+         '<div class="list">' + usRows(up) + '</div></div>';
+    h += '<div class="card"><h2>하락</h2><div class="list">' + usRows(down) + '</div>' +
+      '<button class="tablebtn" data-table="tbl-us-stock">표로 보기</button>' +
+      '<div class="tablewrap" id="tbl-us-stock"><table><thead><tr><th>종목</th><th>티커</th><th>등락률</th><th>종가</th></tr></thead><tbody>' +
+      st.map(function (x) {
+        return '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.symbol) + '</td>' +
+               '<td class="num ' + cls(x.chg_pct) + '">' + x.chg_pct.toFixed(2) + '%</td>' +
+               '<td class="num">' + x.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</td></tr>';
+      }).join("") + '</tbody></table></div></div>';
+    return h + "</section>";
+  }
+
+  /* ── 8. 미국: 섹터 ────────────────────────────────── */
+  function panelUsSector(d) {
+    var u = d.us || null;
+    var s = (u && u.sectors) || [];
+    if (!s.length) return usEmpty("p-us-sector");
+
+    var span = Math.max.apply(null, s.map(function (x) { return Math.abs(x.chg_pct); }).concat([0.5]));
+    var h = '<section class="panel" id="p-us-sector">' +
+      '<div class="card"><h2>섹터</h2>' +
+      '<p class="sub">SPDR 섹터 ETF 등락률. 색이 진할수록 변동이 큽니다. ' +
+      '빨강 상승 / 파랑 하락.</p><div class="grid">';
+    s.forEach(function (x) {
+      h += '<div class="cell" style="' + heatStyle(x.chg_pct, span) + '">' +
+           '<span class="cn">' + esc(x.name) + '</span>' +
+           '<span class="cv num ' + cls(x.chg_pct) + '">' + pct(x.chg_pct) + '</span></div>';
+    });
+    h += '</div>' +
+      '<button class="tablebtn" data-table="tbl-us-sector">표로 보기</button>' +
+      '<div class="tablewrap" id="tbl-us-sector"><table><thead><tr><th>섹터</th><th>티커</th><th>등락률</th><th>종가</th></tr></thead><tbody>' +
+      s.map(function (x) {
+        return '<tr><td>' + esc(x.name) + '</td><td>' + esc(x.symbol) + '</td>' +
+               '<td class="num ' + cls(x.chg_pct) + '">' + x.chg_pct.toFixed(2) + '%</td>' +
+               '<td class="num">' + x.value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '</td></tr>';
+      }).join("") + '</tbody></table></div></div>';
     return h + "</section>";
   }
 
@@ -894,15 +990,53 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     });
   }
 
+  /* ── 시장 · 탭 ─────────────────────────────────────
+     위가 시장(한국/미국), 아래가 그 시장의 화면들. 시장을 바꾸면 탭 줄이 통째로
+     갈리고, 각 시장에서 마지막에 보던 화면으로 돌아온다. 리포트를 다시 그려도
+     (날짜 변경·새로고침) 보던 자리를 지키려고 render() 끝에서 다시 맞춘다. */
+  var market = "kr";
+  var lastPanel = { kr: "p-sum", us: "p-us-sum" };
+
+  try {
+    var savedMarket = localStorage.getItem("market");
+    if (savedMarket === "kr" || savedMarket === "us") market = savedMarket;
+  } catch (e) {}
+
+  function showPanel(id) {
+    lastPanel[market] = id;
+    document.querySelectorAll("#tabs button[data-panel]").forEach(function (b) {
+      b.setAttribute("aria-selected", b.dataset.panel === id ? "true" : "false");
+    });
+    document.querySelectorAll(".panel").forEach(function (p) {
+      p.classList.toggle("on", p.id === id);
+    });
+  }
+
+  function showMarket(m) {
+    market = m;
+    document.querySelectorAll("#markets button").forEach(function (b) {
+      b.setAttribute("aria-selected", b.dataset.market === m ? "true" : "false");
+    });
+    document.querySelectorAll("#tabs button[data-panel]").forEach(function (b) {
+      b.hidden = b.dataset.market !== m;
+    });
+    showPanel(lastPanel[m]);
+  }
+
+  function syncNav() { showMarket(market); }   // render() 뒤에 화면 상태를 되돌린다
+
+  document.getElementById("markets").addEventListener("click", function (e) {
+    var b = e.target.closest("button[data-market]");
+    if (!b || b.dataset.market === market) return;
+    showMarket(b.dataset.market);
+    try { localStorage.setItem("market", market); } catch (err) {}
+    window.scrollTo({ top: 0, behavior: "instant" });
+  });
+
   document.getElementById("tabs").addEventListener("click", function (e) {
     var b = e.target.closest("button[data-panel]");
     if (!b) return;
-    this.querySelectorAll("button").forEach(function (x) {
-      x.setAttribute("aria-selected", x === b ? "true" : "false");
-    });
-    document.querySelectorAll(".panel").forEach(function (p) {
-      p.classList.toggle("on", p.id === b.dataset.panel);
-    });
+    showPanel(b.dataset.panel);
     window.scrollTo({ top: 0, behavior: "instant" });
   });
 

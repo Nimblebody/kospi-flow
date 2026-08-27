@@ -196,5 +196,15 @@ def _sample_us(rng: random.Random, date: str) -> dict:
         sectors.append({"symbol": symbol, "name": name, "value": value, "chg_pct": pct})
     sectors.sort(key=lambda x: x["chg_pct"], reverse=True)
 
+    stocks = []
+    for symbol, name in overseas.WATCH:
+        beta = 1.8 if symbol in ("NVDA", "AMD", "MU", "AVGO", "TSM", "ARM") else 1.0
+        value, pct = move(rng.randrange(40, 900) + 0.5, beta, 1.6)
+        stocks.append({"symbol": symbol, "name": name, "value": value, "chg_pct": pct})
+    stocks.sort(key=lambda x: x["chg_pct"], reverse=True)
+
     prev = f"{date[:4]}-{date[4:6]}-{int(date[6:]) - 1:02d}"   # 현지는 하루 전
-    return {"as_of": prev, "indices": indices, "macro": macro, "sectors": sectors}
+    return {
+        "as_of": prev, "indices": indices, "macro": macro,
+        "sectors": sectors, "stocks": stocks,
+    }
