@@ -102,25 +102,38 @@ header {
   border-bottom: 1px solid var(--line);
   padding-top: env(safe-area-inset-top);
 }
-.head-in { max-width: 520px; margin: 0 auto; padding: 11px 14px 9px; display: flex; align-items: baseline; gap: 9px; }
-.brand { font-weight: 700; font-size: calc(16px * var(--fs)); letter-spacing: -.01em; }
-.head-date { font-size: calc(12.5px * var(--fs)); color: var(--ink-2); margin-left: auto; }
+.head-in {
+  max-width: 520px; margin: 0 auto; padding: 11px 14px 9px;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 9px;
+}
+/* 앱 이름은 줄지 않는다. 안 그러면 좁은 화면에서 한 글자씩 세로로 쪼개진다. */
+.brand { flex: none; white-space: nowrap; font-weight: 700; font-size: calc(16px * var(--fs)); letter-spacing: -.01em; }
+.badge { flex: none; }
+.head-meta { margin-left: auto; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.head-btns { flex: none; align-self: center; display: flex; gap: 6px; }
+.head-date { font-size: calc(12.5px * var(--fs)); color: var(--ink-2); }
+.head-date select { max-width: 100%; }
 .head-date select {
   font: inherit; color: inherit; background: var(--surface); cursor: pointer;
   border: 1px solid var(--line); border-radius: 6px; padding: 2px 5px;
 }
 .head-date select:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
-.refresh {
-  align-self: center; flex: none; width: 26px; height: 26px; padding: 0;
-  font: inherit; font-size: calc(13px * var(--fs)); line-height: 1; color: var(--ink-2);
+.iconbtn {
+  flex: none; width: 30px; height: 30px; padding: 0;
+  font: inherit; font-size: 16px; line-height: 1; color: var(--ink-2);
   background: var(--surface); border: 1px solid var(--line); border-radius: 999px;
   cursor: pointer; display: grid; place-items: center;
 }
-.refresh:disabled { cursor: default; color: var(--ink-3); }
-.refresh:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
-.refresh.spin > span { display: block; animation: spin .7s linear infinite; }
+.iconbtn:disabled { cursor: default; color: var(--ink-3); }
+.iconbtn:focus-visible { outline: 2px solid var(--down); outline-offset: 1px; }
+.iconbtn.spin > span { display: block; animation: spin .7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .refresh.spin > span { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .iconbtn.spin > span { animation: none; } }
+@media (max-width: 479px) {
+  .head-btns { order: 1; margin-left: auto; }
+  .head-meta { order: 2; width: 100%; margin-left: 0; justify-content: flex-end; }
+}
+
 /* ── 설정 (글자 크기) ── */
 .sheet {
   max-width: 520px; margin: 0 auto; padding: 9px 14px 11px;
@@ -353,10 +366,14 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
   <div class="head-in">
     <span class="brand">코스피 수급 지도</span>
     <span class="badge" id="stage">—</span>
-    <span class="head-date num" id="date">—</span>
-    <span class="head-date" id="datepick" hidden><select id="datesel" aria-label="날짜 선택"></select></span>
-    <button type="button" class="refresh" id="refresh" title="새로고침" aria-label="새로고침" hidden><span>↻</span></button>
-    <button type="button" class="refresh" id="gear" title="설정" aria-label="설정" aria-expanded="false" aria-controls="settings"><span>⚙</span></button>
+    <span class="head-meta">
+      <span class="head-date num" id="date">—</span>
+      <span class="head-date" id="datepick" hidden><select id="datesel" aria-label="날짜 선택"></select></span>
+    </span>
+    <span class="head-btns">
+      <button type="button" class="iconbtn" id="refresh" title="새로고침" aria-label="새로고침" hidden><span>↻</span></button>
+      <button type="button" class="iconbtn" id="gear" title="설정" aria-label="설정" aria-expanded="false" aria-controls="settings"><span>⚙</span></button>
+    </span>
   </div>
   <nav class="tabs" id="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-panel="p-sum">요약</button>
@@ -881,6 +898,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
         render(d);
         if (pick) {
           document.getElementById("datepick").hidden = false;
+          document.getElementById("date").hidden = true;
           document.getElementById("datesel").value = pick;
         }
         icon.textContent = "✓";
@@ -919,6 +937,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
         }).join("");
         sel.value = current;
         document.getElementById("datepick").hidden = false;
+        document.getElementById("date").hidden = true;   // 선택기에 같은 날짜가 있다
 
         sel.addEventListener("change", function () {
           var pick = sel.value;
@@ -928,6 +947,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
             .then(function (d) {
               render(d);
               document.getElementById("datepick").hidden = false;
+              document.getElementById("date").hidden = true;
               document.getElementById("datesel").value = pick;
               window.scrollTo({ top: 0, behavior: "instant" });
             })
