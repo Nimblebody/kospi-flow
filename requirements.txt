@@ -1,1 +1,3 @@
 requests>=2.31
+# 윈도우에는 시스템 시간대 DB 가 없어 zoneinfo("Asia/Seoul") 가 실패한다
+tzdata; sys_platform == "win32"
