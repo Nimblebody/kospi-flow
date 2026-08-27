@@ -17,6 +17,9 @@ on:
       - "templates/**"
       - "src/render.py"
       - "main.py"
+      # 로컬에서 백필해 올린 데이터도 배포해야 사이트에 보인다.
+      # Pages 는 배포 시점의 web/ 스냅샷을 서빙하므로 커밋만으로는 안 바뀐다.
+      - "web/data/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
