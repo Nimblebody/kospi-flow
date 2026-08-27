@@ -16,6 +16,8 @@ from __future__ import annotations
 import json
 import logging
 
+import requests
+
 import config
 from src.kis import KisClient
 
@@ -61,6 +63,23 @@ WATCH = [
     ("ARM", "ARM"), ("QCOM", "퀄컴"), ("INTC", "인텔"),
     ("NFLX", "넷플릭스"), ("PLTR", "팔란티어"), ("COIN", "코인베이스"),
     ("LLY", "일라이릴리"), ("JPM", "JP모건"),
+]
+
+# 체크리스트 지표. KIS 가 어느 시장 구분(N/X/I/S)에 무슨 표기로 넣어 두는지 자료가
+# 엇갈려서, (구분, 코드) 쌍을 순서대로 넣어 본다. 끝내 안 나오면 대표 ETF 로 대신
+# 보여주되 화면에 '대용' 이라고 밝힌다. 유가 대신 유가 ETF 를 슬쩍 보여주고 원유
+# 가격이라고 부르지는 않는다.
+EXTRAS = [
+    {
+        "key": "wti", "name": "국제유가 (WTI)", "unit": "usd",
+        "pairs": [("S", "CL"), ("S", "WTI"), ("N", "WTI"), ("S", "CLc1"), ("S", "WTIc1")],
+        "proxy": ("USO", "USO ETF 로 대신"),
+    },
+    {
+        "key": "dxy", "name": "달러지수", "unit": "pt",
+        "pairs": [("X", "DXY"), ("X", ".DXY"), ("X", "USDX"), ("N", "DXY"), ("N", ".DXY")],
+        "proxy": ("UUP", "UUP ETF 로 대신"),
+    },
 ]
 
 # NYSE Arca ETF 는 KIS 에서 보통 AMS 로 잡힌다. 아니면 다음 순서로 찾아본다.
@@ -171,6 +190,75 @@ def _fetch_stock(
     return []
 
 
+def _fetch_pairs(
+    kis: KisClient, key: str, pairs: list[tuple[str, str]], codes: dict
+) -> list[tuple[str, float]]:
+    """(시장구분, 코드) 쌍을 순서대로 넣어 보고 값이 오는 첫 조합을 쓴다."""
+    known = codes.get(key)
+    order = list(pairs)
+    if known:
+        prev = tuple(known.split(":", 1))
+        order = [prev] + [x for x in order if x != prev]
+
+    for div, code in order:
+        try:
+            rows = _series(kis.overseas_index_daily(code, market_div=div))
+        except Exception as exc:
+            log.debug("%s (%s/%s) 실패: %s", key, div, code, exc)
+            continue
+        if len(rows) >= 2:
+            tag = f"{div}:{code}"
+            if codes.get(key) != tag:
+                log.info("%s 코드 확정: %s", key, tag)
+                codes[key] = tag
+            return rows
+    return []
+
+
+def _fetch_btc() -> dict | None:
+    """비트코인. KIS 에는 없어서 공개 시세를 쓴다.
+
+    업비트(원화) 를 먼저 본다. 국내에서 보는 값이 그쪽이고 키도 필요 없다.
+    막히면 CoinGecko 의 달러 시세로 넘어간다. 둘 다 안 되면 화면에서 뺀다.
+    """
+    try:
+        r = requests.get(
+            "https://api.upbit.com/v1/ticker", params={"markets": "KRW-BTC"}, timeout=10
+        )
+        r.raise_for_status()
+        d = r.json()[0]
+        return {
+            "key": "btc", "name": "비트코인",
+            "value": round(float(d["trade_price"])),
+            "change": round(float(d["signed_change_price"])),
+            "chg_pct": round(float(d["signed_change_rate"]) * 100, 2),
+            "unit": "krw", "note": "업비트 · 전일 대비",
+        }
+    except Exception as exc:
+        log.warning("업비트 시세 실패: %s", exc)
+
+    try:
+        r = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids": "bitcoin", "vs_currencies": "usd", "include_24hr_change": "true"},
+            timeout=10,
+        )
+        r.raise_for_status()
+        d = r.json()["bitcoin"]
+        price, pct = float(d["usd"]), round(float(d["usd_24h_change"]), 2)
+        return {
+            "key": "btc", "name": "비트코인",
+            "value": round(price, 2),
+            "change": round(price - price / (1 + pct / 100), 2),
+            "chg_pct": pct,
+            "unit": "usd", "note": "CoinGecko · 24시간",
+        }
+    except Exception as exc:
+        log.warning("CoinGecko 시세 실패: %s", exc)
+
+    return None
+
+
 def _yield_value(v: float) -> float | None:
     """국채 금리를 % 로 맞춘다.
 
@@ -186,7 +274,10 @@ def _yield_value(v: float) -> float | None:
 def collect_us(kis: KisClient) -> dict:
     """간밤 미국 증시 한 장. 실패한 항목은 빠지고, 전부 실패하면 빈 dict."""
     codes = _load_codes()
-    out: dict = {"as_of": "", "indices": [], "macro": [], "sectors": [], "stocks": []}
+    out: dict = {
+        "as_of": "", "indices": [], "macro": [],
+        "sectors": [], "stocks": [], "extras": [],
+    }
     dates: list[str] = []
 
     for spec in INDICES:
@@ -237,6 +328,30 @@ def collect_us(kis: KisClient) -> dict:
             {"symbol": symbol, "name": name, "value": m["value"], "chg_pct": m["chg_pct"]}
         )
 
+    for spec in EXTRAS:
+        rows = _fetch_pairs(kis, spec["key"], spec["pairs"], codes)
+        note = ""
+        if not rows and spec.get("proxy"):
+            symbol, label = spec["proxy"]
+            rows = _fetch_stock(kis, symbol, codes, STOCK_EXCHANGES)
+            note = label
+        m = _move(rows)
+        if not m:
+            log.warning("%s: 값을 못 가져왔습니다", spec["name"])
+            continue
+        dates.append(m["date"])
+        out["extras"].append(
+            {
+                "key": spec["key"], "name": spec["name"], "unit": spec["unit"],
+                "value": m["value"], "change": m["change"], "chg_pct": m["chg_pct"],
+                "note": note,
+            }
+        )
+
+    btc = _fetch_btc()
+    if btc:
+        out["extras"].append(btc)
+
     _save_codes(codes)
 
     if not out["indices"] and not out["sectors"]:
@@ -248,9 +363,9 @@ def collect_us(kis: KisClient) -> dict:
     out["sectors"].sort(key=lambda s: s["chg_pct"], reverse=True)
     out["stocks"].sort(key=lambda s: s["chg_pct"], reverse=True)
     log.info(
-        "미국증시 수집: 지수 %d · 매크로 %d · 섹터 %d · 종목 %d (현지 %s)",
+        "미국증시 수집: 지수 %d · 매크로 %d · 섹터 %d · 종목 %d · 체크리스트 %d (현지 %s)",
         len(out["indices"]), len(out["macro"]), len(out["sectors"]),
-        len(out["stocks"]), out["as_of"],
+        len(out["stocks"]), len(out["extras"]), out["as_of"],
     )
     return out
 
@@ -273,6 +388,18 @@ def probe(kis: KisClient) -> None:
             except Exception as exc:
                 note = f"{'—':>4}  실패: {str(exc)[:38]}"
             print(f"{spec['name']:<14} {spec['div']:<4} {code:<10} {note}")
+
+    for spec in EXTRAS:
+        for div, code in spec["pairs"]:
+            try:
+                rows = _series(kis.overseas_index_daily(code, market_div=div))
+                note = f"{len(rows):>4}  {rows[0][0] if rows else '—':<10} {rows[0][1] if rows else '':>10}"
+            except Exception as exc:
+                note = f"{'—':>4}  실패: {str(exc)[:38]}"
+            print(f"{spec['name']:<14} {div:<4} {code:<10} {note}")
+
+    btc = _fetch_btc()
+    print(f"{'비트코인':<14} {'—':<4} {'—':<10} {btc['value'] if btc else '실패'} ({btc['note'] if btc else ''})")
 
     for symbol, name in SECTORS + WATCH[:3]:   # 종목은 대표 3개만 확인
         for excd in (EXCHANGES if (symbol, name) in SECTORS else STOCK_EXCHANGES):

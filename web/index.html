@@ -401,6 +401,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
   <div class="markets" id="markets" role="tablist" aria-label="시장">
     <button role="tab" aria-selected="true" data-market="kr">한국</button>
     <button role="tab" aria-selected="false" data-market="us">미국</button>
+    <button role="tab" aria-selected="false" data-market="check">체크리스트</button>
   </div>
   <nav class="tabs" id="tabs" role="tablist">
     <button role="tab" aria-selected="true" data-market="kr" data-panel="p-sum">요약</button>
@@ -500,7 +501,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     var main = document.getElementById("main");
     main.innerHTML =
       panelSummary(d) + panelTheme(d) + panelMove(d) + panelStock(d) + panelSector(d) +
-      panelUsSummary(d) + panelUsStock(d) + panelUsSector(d) +
+      panelUsSummary(d) + panelUsStock(d) + panelUsSector(d) + panelCheck(d) +
       '<footer>테마 분류: ' + esc(d.theme_source || "—") + '<br>' +
       '수집 ' + esc((d.collected_at || "").replace("T", " ").slice(0, 16)) + ' · ' +
       '투자 판단의 근거로 쓰기 전에 원 데이터를 확인하세요.</footer>';
@@ -990,16 +991,74 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     });
   }
 
+  /* ── 9. 체크리스트 ────────────────────────────────
+     장 열기 전에 순서대로 훑는 자리. 미국 탭에도 있는 값이 섞여 있는데,
+     여기서는 '오늘 확인할 것' 목록으로 한 줄씩 다시 세운다. */
+  function checkRow(name, value, change, chgPct, unit, note) {
+    var val, move;
+    if (unit === "yield") {
+      val = value.toFixed(2) + "%";
+      move = (change > 0 ? "+" : change < 0 ? "−" : "") + Math.abs(change).toFixed(2) + "%p";
+    } else if (unit === "krw") {
+      val = value.toLocaleString("ko-KR") + "원";
+      move = pct(chgPct);
+    } else if (unit === "usd") {
+      val = "$" + value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      move = pct(chgPct);
+    } else {
+      val = value.toLocaleString("ko-KR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      move = pct(chgPct);
+    }
+    return '<div class="srow">' +
+      '<span class="sn">' + esc(name) + '</span>' +
+      '<span class="sa num">' + val + '</span>' +
+      '<span class="sm">' + (note ? '<span class="chip">' + esc(note) + '</span>' : "") + '</span>' +
+      '<span class="sd num ' + cls(unit === "yield" ? change : chgPct) + '">' + move + '</span>' +
+      '</div>';
+  }
+
+  function panelCheck(d) {
+    var u = d.us || {};
+    var extras = u.extras || [];
+    var h = '<section class="panel" id="p-check">';
+
+    function extra(key) {
+      return extras.filter(function (x) { return x.key === key; })[0] || null;
+    }
+    var ust10 = (u.macro || []).filter(function (m) { return m.unit === "yield"; })[0] || null;
+
+    var rows = "";
+    var wti = extra("wti");
+    if (wti) rows += checkRow(wti.name, wti.value, wti.change, wti.chg_pct, wti.unit, wti.note);
+    if (ust10) rows += checkRow("미 10년물 국채금리", ust10.value, ust10.change, ust10.chg_pct, "yield", "");
+    var btc = extra("btc");
+    if (btc) rows += checkRow(btc.name, btc.value, btc.change, btc.chg_pct, btc.unit, btc.note);
+    var dxy = extra("dxy");
+    if (dxy) rows += checkRow(dxy.name, dxy.value, dxy.change, dxy.chg_pct, dxy.unit, dxy.note);
+
+    h += '<div class="card"><h2>오늘 확인</h2>' +
+         '<p class="sub">' + (u.as_of ? '현지 ' + esc(u.as_of) + ' 종가 기준' : '') +
+         '</p><div class="list">' + (rows || '<div class="empty">데이터 없음</div>') + '</div></div>';
+
+    /* 미국 증시 마감 강세 종목 */
+    var strong = (u.stocks || []).filter(function (x) { return x.chg_pct > 0; }).slice(0, 8);
+    h += '<div class="card"><h2>미국 마감 강세 종목</h2>' +
+         '<p class="sub">국내 투자자가 많이 보는 종목 중 오른 순서</p>' +
+         '<div class="list">' + usRows(strong) + '</div></div>';
+
+    return h + "</section>";
+  }
+
   /* ── 시장 · 탭 ─────────────────────────────────────
      위가 시장(한국/미국), 아래가 그 시장의 화면들. 시장을 바꾸면 탭 줄이 통째로
      갈리고, 각 시장에서 마지막에 보던 화면으로 돌아온다. 리포트를 다시 그려도
      (날짜 변경·새로고침) 보던 자리를 지키려고 render() 끝에서 다시 맞춘다. */
   var market = "kr";
-  var lastPanel = { kr: "p-sum", us: "p-us-sum" };
+  var lastPanel = { kr: "p-sum", us: "p-us-sum", check: "p-check" };
 
   try {
     var savedMarket = localStorage.getItem("market");
-    if (savedMarket === "kr" || savedMarket === "us") market = savedMarket;
+    if (lastPanel[savedMarket]) market = savedMarket;
   } catch (e) {}
 
   function showPanel(id) {
@@ -1017,9 +1076,13 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     document.querySelectorAll("#markets button").forEach(function (b) {
       b.setAttribute("aria-selected", b.dataset.market === m ? "true" : "false");
     });
+    var tabs = 0;
     document.querySelectorAll("#tabs button[data-panel]").forEach(function (b) {
       b.hidden = b.dataset.market !== m;
+      if (!b.hidden) tabs++;
     });
+    // 체크리스트는 화면이 하나뿐이라 탭 줄을 접는다
+    document.getElementById("tabs").hidden = tabs === 0;
     showPanel(lastPanel[m]);
   }
 

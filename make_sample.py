@@ -203,8 +203,21 @@ def _sample_us(rng: random.Random, date: str) -> dict:
         stocks.append({"symbol": symbol, "name": name, "value": value, "chg_pct": pct})
     stocks.sort(key=lambda x: x["chg_pct"], reverse=True)
 
+    wti, wti_pct = move(63.4, 0.5, 1.4)
+    dxy, dxy_pct = move(98.2, -0.2, 0.3)
+    btc, btc_pct = move(110_898_000, 1.5, 2.2)
+    extras = [
+        {"key": "wti", "name": "국제유가 (WTI)", "unit": "usd",
+         "value": wti, "change": round(wti * wti_pct / 100, 2), "chg_pct": wti_pct, "note": ""},
+        {"key": "dxy", "name": "달러지수", "unit": "pt",
+         "value": dxy, "change": round(dxy * dxy_pct / 100, 2), "chg_pct": dxy_pct, "note": ""},
+        {"key": "btc", "name": "비트코인", "unit": "krw",
+         "value": round(btc), "change": round(btc * btc_pct / 100), "chg_pct": btc_pct,
+         "note": "업비트 · 전일 대비"},
+    ]
+
     prev = f"{date[:4]}-{date[4:6]}-{int(date[6:]) - 1:02d}"   # 현지는 하루 전
     return {
         "as_of": prev, "indices": indices, "macro": macro,
-        "sectors": sectors, "stocks": stocks,
+        "sectors": sectors, "stocks": stocks, "extras": extras,
     }
