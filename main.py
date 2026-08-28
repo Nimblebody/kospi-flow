@@ -9,6 +9,7 @@
     python main.py --build-only           # API 없이 web/ 정적 파일만 다시 빌드
     python main.py --probe-us             # 미국 시세 심볼 코드가 뭐가 통하는지 확인
     python main.py --tg-test              # 텔레그램 알림 설정 점검 (확인 메시지 1통)
+    python main.py --explain-only         # 이미 있는 리포트에 '왜 움직였나' 만 다시 붙인다
 
 결과물
     web/data/<YYYY-MM-DD>.json  : 그날 리포트
@@ -18,6 +19,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 from datetime import datetime
@@ -129,6 +131,57 @@ def backfill(end_date: str, days: int) -> None:
 
     render.build_site()
     log.info("백필 완료: %d일치", made)
+
+
+def explain_only(date: str | None) -> None:
+    """수급은 그대로 두고 해설만 다시 만든다.
+
+    KIS 를 부르지 않으므로 30초면 끝난다. 프롬프트를 손볼 때마다 4분짜리 수집을
+    다시 돌릴 이유가 없다.
+    """
+    from src import explain as explainer
+
+    latest_path = config.DATA_DIR / "latest.json"
+    latest_date = None
+    if latest_path.exists():
+        latest_date = json.loads(latest_path.read_text(encoding="utf-8")).get("date")
+
+    iso = f"{date[:4]}-{date[4:6]}-{date[6:]}" if date else latest_date
+    report = store.load_report(iso) if iso else None
+    if not report:
+        log.error("%s 리포트가 없습니다. 먼저 리포트를 만들어야 합니다.", iso or "latest")
+        sys.exit(1)
+
+    history = store.load_history(report["date"], limit=20)
+    got = explainer.explain(report, history)
+    if not got:
+        log.error(
+            "해설을 만들지 못했습니다. ANTHROPIC_API_KEY 가 비었거나, "
+            "그날 기사를 못 찾았거나, 호출이 실패했습니다."
+        )
+        sys.exit(1)
+
+    report["explain"] = got
+    store.save_report(report, make_latest=(report["date"] == latest_date))
+    render.build_site()
+
+    # 결과를 로그에 그대로 남긴다. 품질은 사람이 읽어 봐야 안다.
+    for market, blk in got["markets"].items():
+        print()
+        print(f"── {blk['index']} · {blk.get('label')} "
+              f"(z={blk.get('z')} · σ={blk.get('sigma')}%) ─────────────")
+        print(f"   등락 {blk['chg_pct']:+.2f}%"
+              + (f" · 수급 {blk['flow_z']}σ" if blk.get("flow_z") is not None else "")
+              + f" · 기사 {len(blk.get('sources') or [])}건")
+        if blk.get("verdict"):
+            print(f"   결론: {blk['verdict']}")
+            for pt in blk.get("points") or []:
+                print(f"     · {pt}")
+            if blk.get("conflict"):
+                print(f"   어긋남: {blk['conflict']}")
+            print(f"   확신: {blk.get('confidence')} · 근거 기사 {blk.get('used')}")
+        else:
+            print("   (해설 없음 — 판정만)")
 
 
 def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
@@ -261,6 +314,11 @@ def main() -> None:
     )
     p.add_argument("--no-notify", action="store_true", help="텔레그램 알림 끄기")
     p.add_argument(
+        "--explain-only",
+        action="store_true",
+        help="수급은 그대로 두고 '왜 움직였나' 만 다시 만든다 (KIS 호출 없음)",
+    )
+    p.add_argument(
         "--tg-test",
         action="store_true",
         help="텔레그램 토큰·챗 아이디를 두드려 보고 확인 메시지를 한 통 보낸다",
@@ -282,6 +340,10 @@ def main() -> None:
         help="과거 N영업일 리포트를 확정 수급으로 채운다 (자금 이동 표시용)",
     )
     args = p.parse_args()
+
+    if args.explain_only:
+        explain_only(args.date)
+        return
 
     if args.tg_test:
         sys.exit(0 if notify.selftest() else 1)
