@@ -220,15 +220,18 @@ SCHEMA = {
 RULES = """규칙
 1. 구간이 '조용' 이면 특별한 이유가 없다는 것이 기본 답이다. 기사가 이유를 붙이더라도
    최근 변동성 기준으로 평범한 움직임이면 그렇게 말하라. 없는 이유를 만들지 마라.
-2. 기사 주장이 우리 데이터와 어긋나면 conflict 에 적어라. 예: 기사는 반도체 매도라는데
+2. verdict 는 화면 맨 위에 굵게 한 줄로 들어간다. **한 문장, 공백 포함 100자 이내.**
+   결론만 담는다. 근거·숫자는 points 에 쓴다. 여러 문장을 이어 붙이지 마라.
+3. points 는 3~5개. **각 150자 이내.** verdict 에 쓴 말을 되풀이하지 마라. 각 항목이
+   데이터에 근거한 것인지 기사에 근거한 것인지 드러나게 쓴다.
+4. 기사 주장이 우리 데이터와 어긋나면 conflict 에 적어라. 예: 기사는 반도체 매도라는데
    반도체 테마가 순매수 1위인 경우. 어긋나는 게 없으면 빈 문자열.
-3. points 는 3~5문장. 각 문장이 데이터에 근거한 것인지 기사에 근거한 것인지 드러나게 쓴다.
-4. 단정하지 마라. '~로 보인다', '~라는 설명이 많다' 처럼 쓴다. 투자 권유는 하지 마라.
-5. 근거로 삼은 기사 번호를 used 에 넣어라.
-6. confidence 는 데이터와 기사가 같은 방향을 가리킬수록 높다. 구간이 '조용' 이면 '낮음'.
-7. 두 기준이 어긋나면 그 사실 자체를 말하라. 예: 절대로는 3% 넘게 빠졌지만 요즘 이
+5. 단정하지 마라. '~로 보인다', '~라는 설명이 많다' 처럼 쓴다. 투자 권유는 하지 마라.
+6. used 에는 실제로 근거로 삼은 기사 번호만 **최대 5개**. 읽은 기사를 다 나열하지 마라.
+7. confidence 는 데이터와 기사가 같은 방향을 가리킬수록 높다. 구간이 '조용' 이면 '낮음'.
+8. 두 기준이 어긋나면 그 사실 자체를 말하라. 예: 절대로는 3% 넘게 빠졌지만 요즘 이
    시장에서는 평범한 등락이다. 어느 한쪽만 보고 쓰지 마라.
-8. 한국어로 쓴다."""
+9. 한국어로 쓴다."""
 
 
 def _fmt_report(report: dict, verdict: dict, fz: float | None, market: str) -> str:
@@ -336,6 +339,13 @@ def _ask(prompt: str) -> dict | None:
         messages=[{"role": "user", "content": prompt}],
         output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
     )
+    u = res.usage
+    log.info(
+        "  토큰 입력 %d · 출력 %d · 약 $%.4f",
+        u.input_tokens, u.output_tokens,
+        u.input_tokens / 1e6 * 2.0 + u.output_tokens / 1e6 * 10.0,   # Sonnet 5 단가
+    )
+
     text = next((b.text for b in res.content if b.type == "text"), "")
     return json.loads(text) if text else None
 
