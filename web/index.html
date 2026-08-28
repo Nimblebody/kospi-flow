@@ -883,8 +883,8 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
   /* ── 5. 업종 ──────────────────────────────────────── */
   /* 업종 요약. 기사가 붙은 업종은 이유까지, 나머지는 어느 종목이 끌었는지까지만.
      하루에 업종 단위 기사가 나오는 업종이 3~5개뿐이라 그 이상은 지어내는 것이 된다. */
-  function sectorSummary(d) {
-    var sum = (d.explain || {}).sectors;
+  function sectorSummary(d, market) {
+    var sum = ((d.explain || {}).sectors || {})[market];
     if (!sum || !(sum.rows || []).length) return "";
 
     function group(title, rank) {
@@ -899,16 +899,17 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
       }).join("");
     }
 
-    return '<div class="card secsum"><h2>업종 요약</h2>' +
+    return '<div class="card secsum"><h2>' + (market === "us" ? "섹터 요약" : "업종 요약") + '</h2>' +
       (sum.note ? '<p class="note">' + esc(sum.note) + '</p>' : "") +
-      group("오른 업종", "top") + group("내린 업종", "bottom") + '</div>';
+      // '오른/내린' 이라고 쓰면 전부 상승한 날 하위 칸에 +1.2% 가 들어간다.
+      group("등락률 상위", "top") + group("등락률 하위", "bottom") + '</div>';
   }
 
   function panelSector(d) {
     var s = d.sectors || [];
     var h = '<section class="panel" id="p-sector">';
     if (!s.length) return h + '<div class="card"><div class="empty">업종 데이터 없음</div></div></section>';
-    h += sectorSummary(d);
+    h += sectorSummary(d, "kr");
     var span = Math.max.apply(null, s.map(function (x) { return Math.abs(x.chg_pct); }).concat([0.5]));
     var clickable = s.filter(function (x) { return (x.stocks || []).length; }).length;
     h += '<div class="card"><h2>코스피 업종 등락</h2>' +
@@ -1061,6 +1062,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
 
     var span = Math.max.apply(null, s.map(function (x) { return Math.abs(x.chg_pct); }).concat([0.5]));
     var h = '<section class="panel" id="p-us-sector">' +
+      sectorSummary(d, "us") +
       '<div class="card"><h2>섹터</h2>' +
       '<p class="sub">SPDR 섹터 ETF 등락률. 색이 진할수록 변동이 큽니다. ' +
       '빨강 상승 / 파랑 하락.</p><div class="grid">';
@@ -1109,7 +1111,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
           ? ' · 수급이 잡힌 ' + n + '종목 중 상위 ' + sec.stocks.length + '개'
           : ' · 수급이 잡힌 ' + n + '종목';
         // 요약 카드에 쓴 한 줄을 여기서도 보여준다. 같은 말을 두 번 찾지 않게.
-        var sum = ((current || {}).explain || {}).sectors;
+        var sum = (((current || {}).explain || {}).sectors || {}).kr;
         var line = ((sum && sum.rows) || []).filter(function (r) {
           return r.name === sec.name;
         })[0];

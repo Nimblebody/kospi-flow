@@ -152,6 +152,7 @@ def make_snapshot(date: str, stage: str, themes: dict[str, list[str]]) -> dict:
             }
         )
 
+    us = _sample_us(rng, date)
     return {
         "date": date,
         "stage": stage,
@@ -160,12 +161,12 @@ def make_snapshot(date: str, stage: str, themes: dict[str, list[str]]) -> dict:
         "flows": flows,
         "market": market,
         "volume_leaders": leaders,
-        "us": _sample_us(rng, date),
-        "explain": _sample_explain(market),
+        "us": us,
+        "explain": _sample_explain(market, us),
     }
 
 
-def _sample_explain(market: dict) -> dict:
+def _sample_explain(market: dict, us: dict) -> dict:
     """'왜 움직였나' 화면 확인용. 실제 해설은 src/explain.py 가 만든다.
 
     구간 판정은 샘플에서도 진짜 계산으로 낸다. 화면에 적힌 등락률과 z 가 어긋나면
@@ -213,8 +214,22 @@ def _sample_explain(market: dict) -> dict:
     return {
         "model": "claude-sonnet-5",
         "sectors": {
-            "note": "반도체에서 빠진 돈이 화학·음식료 같은 내수 업종으로 옮겨 간 하루로 보입니다.",
-            "rows": sector_rows,
+            "kr": {
+                "note": "반도체에서 빠진 돈이 화학·음식료 같은 내수 업종으로 옮겨 간 하루로 보입니다.",
+                "rows": sector_rows,
+            },
+            "us": {
+                "note": "엔비디아 실적에 반도체·기술만 오르고 방어 업종은 밀린 하루로 보입니다.",
+                "rows": [
+                    {
+                        "name": x["name"], "chg_pct": x["chg_pct"],
+                        "rank": "top" if i < len(us["sectors"]) // 2 else "bottom",
+                        "line": (f"{x['name']} 는 주요 종목이 등락을 끌었습니다." if i % 2 else ""),
+                        "sources": [2] if i % 2 else [],
+                    }
+                    for i, x in enumerate(us["sectors"])
+                ],
+            },
         },
         "markets": {
             "kr": block(

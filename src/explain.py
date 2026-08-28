@@ -380,6 +380,20 @@ SECTOR_TOP = 10
 SECTOR_QUERY = "특징주"
 SECTOR_POOL = 70
 
+# 미국 섹터에는 구성 종목이 딸려 오지 않는다(ETF 등락률만 온다). 우리가 이미 받는
+# 관심 종목 20개를 섹터에 붙여 '어느 종목이 끌었나' 를 만든다.
+#
+# 엔비디아·브로드컴은 실제로 기술(XLK)에도 들어 있지만 반도체로 보낸다. 국내 수급이
+# 따라 움직이는 자리가 그쪽이고, 한 종목을 두 섹터에 세면 같은 움직임을 두 번 센다.
+US_SECTOR_MEMBERS = {
+    "반도체": ["NVDA", "AMD", "MU", "AVGO", "TSM", "ASML", "ARM", "QCOM", "INTC"],
+    "기술": ["MSFT", "AAPL", "PLTR"],
+    "커뮤니케이션": ["GOOGL", "META", "NFLX"],
+    "경기소비재": ["AMZN", "TSLA"],
+    "금융": ["JPM", "COIN"],
+    "헬스케어": ["LLY"],
+}
+
 
 def match_articles(sectors: list[dict], news: list[dict]) -> dict[str, list[int]]:
     """제목에 나온 종목 이름으로 기사를 업종에 배정한다.
@@ -406,13 +420,34 @@ def match_articles(sectors: list[dict], news: list[dict]) -> dict[str, list[int]
     return hit
 
 
-def _sector_prompt(report: dict, rows: list[dict], hit: dict, news: list[dict]) -> str:
+def _us_sector_rows(report: dict) -> list[dict]:
+    """미국 섹터에 관심 종목을 붙여 국내 업종과 같은 모양으로 맞춘다."""
+    us = report.get("us") or {}
+    by_symbol = {x["symbol"]: x for x in (us.get("stocks") or [])}
+    rows = []
+    for sec in us.get("sectors") or []:
+        members = [
+            by_symbol[sym] for sym in US_SECTOR_MEMBERS.get(sec["name"], [])
+            if sym in by_symbol
+        ]
+        members.sort(key=lambda x: abs(x["chg_pct"]), reverse=True)
+        rows.append({**sec, "stocks": members})
+    return rows
+
+
+def _sector_prompt(report: dict, rows: list[dict], hit: dict, news: list[dict],
+                   market: str = "kr") -> str:
     blocks = []
     for sec in rows:
-        stocks = ", ".join(
-            f"{x['name']} {x['chg_pct']:+.1f}% {x.get('net_eok', 0):+,.0f}억"
-            for x in (sec.get("stocks") or [])[:3]
-        )
+        if market == "kr":
+            stocks = ", ".join(
+                f"{x['name']} {x['chg_pct']:+.1f}% {x.get('net_eok', 0):+,.0f}억"
+                for x in (sec.get("stocks") or [])[:3]
+            )
+        else:
+            stocks = ", ".join(
+                f"{x['name']} {x['chg_pct']:+.1f}%" for x in (sec.get("stocks") or [])[:3]
+            ) or "구성 종목 자료 없음"
         arts = hit.get(sec["name"]) or []
         tag = f" | 기사 {arts}" if arts else " | 기사 없음"
         blocks.append(f"{sec['name']} {sec['chg_pct']:+.2f}% | {stocks}{tag}")
@@ -421,18 +456,30 @@ def _sector_prompt(report: dict, rows: list[dict], hit: dict, news: list[dict]) 
         f"{n}. [{a['time']}] {a['title']}" for n, a in enumerate(news, 1)
     ) or "(기사 없음)"
 
-    idx = {i["name"]: i for i in (report.get("indices") or [])}
-    k = idx.get("코스피")
-    head = f"코스피 {k['chg_pct']:+.2f}%" if k else ""
-    iv = report.get("investors") or {}
-    head += f" · 외국인 {iv.get('foreign_eok', 0):+,.0f}억 · 기관 {iv.get('institution_eok', 0):+,.0f}억"
+    if market == "kr":
+        idx = {i["name"]: i for i in (report.get("indices") or [])}
+        k = idx.get("코스피")
+        head = f"코스피 {k['chg_pct']:+.2f}%" if k else ""
+        iv = report.get("investors") or {}
+        head += (f" · 외국인 {iv.get('foreign_eok', 0):+,.0f}억"
+                 f" · 기관 {iv.get('institution_eok', 0):+,.0f}억")
+        intro = (f"너는 그날 코스피 업종 등락을 한 줄씩 정리한다. "
+                 f"상위 {SECTOR_TOP}개와 하위 {SECTOR_TOP}개다.")
+        col = "[업종 — 등락률 | 그 업종에서 수급이 잡힌 상위 종목 | 붙은 기사 번호]"
+    else:
+        us = report.get("us") or {}
+        head = " · ".join(f"{i['name']} {i['chg_pct']:+.2f}%" for i in (us.get("indices") or []))
+        intro = ("너는 간밤 미국 섹터 등락을 한 줄씩 정리한다. SPDR 섹터 ETF 와 반도체다. "
+                 "등락률은 ETF 종가 기준이고, 옆의 종목은 국내 투자자가 많이 보는 "
+                 "종목을 그 섹터에 붙인 것이다(섹터 전체가 아니다).")
+        col = "[섹터 — ETF 등락률 | 그 섹터의 주요 종목 | 붙은 기사 번호]"
 
-    return f"""너는 그날 코스피 업종 등락을 한 줄씩 정리한다. 상위 {SECTOR_TOP}개와 하위 {SECTOR_TOP}개다.
+    return f"""{intro}
 
 [오늘 시장]
 {head}
 
-[업종 — 등락률 | 그 업종에서 수급이 잡힌 상위 종목 | 붙은 기사 번호]
+{col}
 {chr(10).join(blocks)}
 
 [오늘 기사 제목 {len(news)}건]
@@ -441,45 +488,51 @@ def _sector_prompt(report: dict, rows: list[dict], hit: dict, news: list[dict]) 
 {SECTOR_RULES}"""
 
 
-def sectors(report: dict, news: list[dict]) -> dict | None:
-    """상위/하위 업종을 한 번의 호출로 정리한다.
+def sectors(report: dict, news: list[dict], market: str = "kr") -> dict | None:
+    """업종·섹터를 한 번의 호출로 정리한다.
 
     업종마다 따로 부르면 3.5배 비싸고 업종 간 비교도 안 된다. 한 번에 넣어도
     입력이 4,500토큰 남짓이라 지수 해설과 비슷하다.
     """
-    real = [s for s in (report.get("sectors") or []) if s.get("stocks")]
-    if len(real) < 4:
-        log.info("구성 종목이 붙은 업종이 적어 업종 요약을 건너뜁니다.")
-        return None
+    if market == "kr":
+        real = [s for s in (report.get("sectors") or []) if s.get("stocks")]
+        if len(real) < 4:
+            log.info("구성 종목이 붙은 업종이 적어 업종 요약을 건너뜁니다.")
+            return None
+        ranked = sorted(real, key=lambda s: s["chg_pct"], reverse=True)
+        rows = ranked[:SECTOR_TOP] + ranked[-SECTOR_TOP:] if len(ranked) > SECTOR_TOP * 2 else ranked
 
-    ranked = sorted(real, key=lambda s: s["chg_pct"], reverse=True)
-    rows = ranked[:SECTOR_TOP] + ranked[-SECTOR_TOP:]
-
-    # 공용 풀에 개별 종목 기사를 더한다. 지수 해설 쪽 풀은 건드리지 않는다 —
-    # 거기에 특징주 기사가 섞이면 지수 이야기가 묽어진다.
-    seen = {a["title"] for a in news}
-    extra = [a for a in headlines([SECTOR_QUERY], report["date"], limit=40)
-             if a["title"] not in seen]
-    news = sorted(news + extra, key=lambda x: x["time"])[:SECTOR_POOL]
+        # 공용 풀에 개별 종목 기사를 더한다. 지수 해설 쪽 풀은 건드리지 않는다 —
+        # 거기에 특징주 기사가 섞이면 지수 이야기가 묽어진다.
+        seen = {a["title"] for a in news}
+        extra = [a for a in headlines([SECTOR_QUERY], report["date"], limit=40)
+                 if a["title"] not in seen]
+        news = sorted(news + extra, key=lambda x: x["time"])[:SECTOR_POOL]
+    else:
+        rows = _us_sector_rows(report)
+        if len(rows) < 4:
+            log.info("미국 섹터 자료가 적어 요약을 건너뜁니다.")
+            return None
 
     hit = match_articles(rows, news)
 
     try:
-        got = _ask(_sector_prompt(report, rows, hit, news), SECTOR_SCHEMA)
+        got = _ask(_sector_prompt(report, rows, hit, news, market), SECTOR_SCHEMA)
     except Exception as exc:
-        log.warning("업종 요약 실패: %s", exc)
+        log.warning("%s 섹터 요약 실패: %s", market, exc)
         return None
     if not got:
         return None
 
     line = {r["name"]: r["line"] for r in (got.get("rows") or [])}
+    half = len(rows) // 2 if market == "us" else SECTOR_TOP
     out = {
         "note": got.get("note", ""),
         "rows": [
             {
                 "name": sec["name"],
                 "chg_pct": sec["chg_pct"],
-                "rank": "top" if i < SECTOR_TOP else "bottom",
+                "rank": "top" if i < half else "bottom",
                 "line": line.get(sec["name"], ""),
                 "sources": hit.get(sec["name"]) or [],
             }
@@ -487,8 +540,8 @@ def sectors(report: dict, news: list[dict]) -> dict | None:
         ],
     }
     log.info(
-        "업종 요약: %d개 (기사가 붙은 업종 %d개) · %s",
-        len(out["rows"]), len(hit), out["note"][:40],
+        "%s 섹터 요약: %d개 (기사가 붙은 곳 %d개) · %s",
+        market, len(out["rows"]), len(hit), out["note"][:40],
     )
     return out
 
@@ -597,13 +650,17 @@ def explain(report: dict, history: list[dict]) -> dict | None:
         if got:
             out["markets"][market] = got
 
-    # 업종 요약. 국내 해설이 이미 모아 둔 기사를 그대로 쓴다 (RSS 추가 호출 없음).
-    try:
-        news = (out["markets"].get("kr") or {}).get("sources") or []
-        got = sectors(report, news)
-        if got:
-            out["sectors"] = got
-    except Exception as exc:
-        log.warning("업종 요약 실패(무시): %s", exc)
+    # 업종·섹터 요약. 지수 해설이 이미 모아 둔 기사를 그대로 쓴다.
+    out["sectors"] = {}
+    for market in ("kr", "us"):
+        try:
+            news = (out["markets"].get(market) or {}).get("sources") or []
+            got = sectors(report, news, market)
+            if got:
+                out["sectors"][market] = got
+        except Exception as exc:
+            log.warning("%s 섹터 요약 실패(무시): %s", market, exc)
+    if not out["sectors"]:
+        out.pop("sectors")
 
     return out if out["markets"] else None
