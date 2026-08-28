@@ -134,6 +134,23 @@ header {
   .head-meta { order: 2; width: 100%; margin-left: 0; justify-content: flex-end; }
 }
 
+/* ── 왜 움직였나 ── */
+.why h2 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.why .badge.big { color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, var(--line)); background: var(--up-soft); }
+.why .lead { margin: 9px 0 0; font-size: calc(14px * var(--fs)); font-weight: 600; line-height: 1.5; letter-spacing: -.01em; }
+.why ul { margin: 8px 0 0; padding-left: 17px; }
+.why li { font-size: calc(12.5px * var(--fs)); line-height: 1.6; color: var(--ink-2); margin-top: 4px; }
+.why .conflict {
+  margin: 10px 0 0; padding: 8px 10px; border-radius: 8px;
+  background: var(--down-soft); border: 1px solid color-mix(in srgb, var(--down) 25%, var(--line));
+  font-size: calc(11.5px * var(--fs)); color: var(--ink-2); line-height: 1.55;
+}
+.why .foot { margin: 9px 0 0; font-size: calc(10.5px * var(--fs)); color: var(--ink-3); }
+.srclist { display: flex; flex-direction: column; gap: 6px; padding: 2px 0; }
+.srclist a { font-size: calc(11.5px * var(--fs)); color: var(--ink-2); text-decoration: none; line-height: 1.45; }
+.srclist a:hover { text-decoration: underline; }
+.srclist .t { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
 /* ── 체크리스트 (눌러서 그래프) ── */
 .crow { border-top: 1px solid var(--line-soft); }
 .crow:first-child { border-top: 0; }
@@ -527,6 +544,54 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     syncNav();
   }
 
+  /* ── 왜 움직였나 (추정) ────────────────────────────
+     구간 판정(조용/보통/큰 날/이례적)은 파이썬이 계산해 넣어 준 값이다.
+     화면에서는 그 근거(σ 대비 몇 배인지)를 같이 적어 판단을 확인할 수 있게 한다. */
+  function panelWhy(d, market) {
+    var ex = ((d.explain || {}).markets || {})[market];
+    if (!ex) return "";
+
+    var badge = (ex.band === "big" || ex.band === "extreme") ? " big" : "";
+    var h = '<div class="card why"><h2>왜 움직였나' +
+      '<span class="badge' + badge + '">' + esc(ex.label) + '</span></h2>';
+
+    var basis = esc(ex.index) + " " + pct(ex.chg_pct);
+    if (ex.z != null) basis += " · 최근 20일 변동성(σ " + ex.sigma + "%)의 " + ex.z + "배";
+    if (ex.flow_z != null) basis += " · 수급 " + ex.flow_z + "σ";
+    h += '<p class="sub">' + basis + '</p>';
+
+    if (ex.verdict) {
+      h += '<p class="lead">' + esc(ex.verdict) + '</p>';
+      if ((ex.points || []).length) {
+        h += "<ul>" + ex.points.map(function (t) {
+          return "<li>" + esc(t) + "</li>";
+        }).join("") + "</ul>";
+      }
+      if (ex.conflict) {
+        h += '<p class="conflict">기사와 데이터가 어긋나는 곳 — ' + esc(ex.conflict) + '</p>';
+      }
+      h += '<p class="foot">확신 ' + esc(ex.confidence || "—") +
+           ' · 기사 ' + (ex.sources || []).length + '건을 읽고 쓴 추정입니다. ' +
+           '뉴스가 붙이는 이유는 사후 설명이라 인과가 아닙니다.</p>';
+    } else {
+      h += '<p class="lead">이 움직임에 대한 해설이 없습니다.</p>' +
+           '<p class="foot">그날 기사를 찾지 못했거나 해설 생성이 꺼져 있습니다. ' +
+           '위 구간 판정은 그대로 유효합니다.</p>';
+    }
+
+    if ((ex.sources || []).length) {
+      var id = "tbl-why-" + market;
+      h += '<button class="tablebtn" data-table="' + id + '">근거 기사 ' + ex.sources.length + '건</button>' +
+        '<div class="tablewrap" id="' + id + '"><div class="srclist">' +
+        ex.sources.map(function (a, i) {
+          return '<a href="' + esc(a.url) + '" target="_blank" rel="noopener">' +
+            '<span class="t">' + (i + 1) + '. ' + esc(a.time) + '</span> ' + esc(a.title) + '</a>';
+        }).join("") + '</div></div>';
+    }
+
+    return h + "</div>";
+  }
+
   /* ── 1. 요약 ──────────────────────────────────────── */
   function panelSummary(d) {
     var h = '<section class="panel on" id="p-sum">';
@@ -542,6 +607,8 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     h += '<div class="card"><ul class="headline">' +
          (d.headline || []).map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") +
          '</ul></div>';
+
+    h += panelWhy(d, "kr");
 
     if (d.indices && d.indices.length) {
       h += '<div class="card"><h2>지수</h2><div class="idx">';
@@ -856,6 +923,8 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
          usHeadline(u).map(function (t) { return "<li>" + esc(t) + "</li>"; }).join("") +
          '</ul></div>';
 
+    h += panelWhy(d, "us");
+
     h += '<div class="card"><h2>간밤 미국 마감</h2>' +
          '<p class="sub">현지 ' + esc(u.as_of || "—") + ' 종가 기준. ' +
          '국내 리포트가 나가는 시각에는 미국 장이 아직 열리기 전입니다.</p>' +
@@ -1000,10 +1069,12 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     });
 
     document.querySelectorAll(".tablebtn").forEach(function (b) {
+      // 접는 버튼이 표만 여는 게 아니게 됐다(근거 기사 목록). 원래 문구를 기억해 둔다.
+      if (!b.dataset.label) b.dataset.label = b.textContent;
       b.addEventListener("click", function () {
         var t = document.getElementById(b.dataset.table);
         var on = t.classList.toggle("on");
-        b.textContent = on ? "표 닫기" : "표로 보기";
+        b.textContent = on ? "닫기" : b.dataset.label;
       });
     });
   }

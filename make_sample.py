@@ -161,6 +161,64 @@ def make_snapshot(date: str, stage: str, themes: dict[str, list[str]]) -> dict:
         "market": market,
         "volume_leaders": leaders,
         "us": _sample_us(rng, date),
+        "explain": _sample_explain(market),
+    }
+
+
+def _sample_explain(market: dict) -> dict:
+    """'왜 움직였나' 화면 확인용. 실제 해설은 src/explain.py 가 만든다.
+
+    구간 판정은 샘플에서도 진짜 계산으로 낸다. 화면에 적힌 등락률과 z 가 어긋나면
+    미리보기를 보는 사람이 읽는 법을 잘못 배운다.
+    """
+    from src.explain import classify
+
+    kospi = next((i for i in market["indices"] if i["name"] == "코스피"), None)
+    chg = kospi["chg_pct"] if kospi else 0.0
+    v = classify(chg, 4.914)          # 2026-08-28 실측 σ
+
+    def block(index, chg, sigma, z, label, band, verdict, points, conflict, conf):
+        return {
+            "index": index, "chg_pct": chg, "sigma": sigma, "z": z,
+            "label": label, "band": band, "flow_z": 0.2 if index == "코스피" else None,
+            "verdict": verdict, "points": points, "conflict": conflict,
+            "confidence": conf, "used": [1, 3],
+            "sources": [
+                {"title": "코스피, 반도체 강세에 상승 마감", "source": "샘플뉴스",
+                 "time": "16:05", "url": "https://example.com/1"},
+                {"title": "외국인 순매수 이틀째…반도체 집중", "source": "샘플경제",
+                 "time": "16:40", "url": "https://example.com/2"},
+                {"title": "美 관세 우려에 코스피 낙폭 확대", "source": "샘플일보",
+                 "time": "17:10", "url": "https://example.com/3"},
+            ],
+        }
+
+    return {
+        "model": "claude-sonnet-5",
+        "markets": {
+            "kr": block(
+                "코스피", chg, v["sigma"], v["z"], v["label"], v["band"],
+                "최근 변동성 기준으로는 평범한 하루입니다. 특별한 이유를 찾기 어렵습니다.",
+                [
+                    f"요즘 코스피는 하루 표준편차가 4.9%인 국면이라, 오늘의 {chg:+.2f}%는 그 {v['z']}배 수준입니다 (데이터).",
+                    "외국인·기관이 함께 순매수였지만 규모는 최근 평균 범위 안입니다 (데이터).",
+                    "기사 다수가 반도체 강세를 이유로 들지만, 그 정도 움직임은 이 시장에서 흔합니다 (기사 1·3).",
+                ],
+                "일부 기사는 관세 우려로 낙폭이 확대됐다고 썼지만 지수는 상승 마감했습니다.",
+                "낮음",
+            ),
+            "us": block(
+                "S&P 500", -0.02, 0.646, 0.03, "조용", "quiet",
+                "사실상 보합입니다. 엔비디아 실적 발표를 앞둔 관망세로 보입니다.",
+                [
+                    "S&P 500 변동폭이 최근 표준편차의 3% 수준으로, 방향성이 없는 하루였습니다 (데이터).",
+                    "섹터도 상하위 폭이 좁아 특정 업종이 끌고 간 흔적이 없습니다 (데이터).",
+                    "기사들은 공통적으로 실적 대기 관망을 이유로 듭니다 (기사 1).",
+                ],
+                "",
+                "낮음",
+            ),
+        },
     }
 
 

@@ -25,7 +25,7 @@ _THEME_KEEP = (
 # 날짜별 파일에 남길 최상위 키. themes 는 아래에서 따로 추린다.
 _TOP_KEEP = (
     "date", "stage", "collected_at", "theme_source",
-    "headline", "investors", "indices", "rotation", "us",
+    "headline", "investors", "indices", "rotation", "us", "explain",
 )
 
 

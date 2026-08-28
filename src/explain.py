@@ -1,0 +1,370 @@
+"""
+증시가 왜 움직였는지에 대한 의견.
+
+두 단계로 나눈다.
+
+  1) 오늘 움직임이 최근 기준으로 큰가  — 파이썬이 판정한다
+  2) 그렇다면 왜 그랬을까              — 기사와 우리 데이터를 함께 넣고 모델에게 묻는다
+
+1번을 모델에게 맡기지 않는 이유가 있다. 고정 임계값은 시장마다 뜻이 달라진다.
+실측(2026-08-28)으로 코스피의 최근 20영업일 표준편차는 4.91%, S&P 500 은 0.65%다.
+'1% 하락' 에 같은 무게를 두면 코스피는 62% 의 날이, S&P 는 20% 의 날이 걸린다.
+그래서 등락률을 그 시장의 표준편차로 나눈 값(z)으로 판정하고, 결과를 모델에게
+알려준다. 같은 날을 다시 돌려도 같은 판정이 나온다.
+
+표준편차는 야후 일봉으로 잰다. 우리 백필 데이터에는 과거 지수가 없다(과거 지수를
+돌려주는 API 가 없어 그날치만 채운다 — collect.py 참고).
+
+키가 없거나 호출이 실패하면 이 꼭지만 통째로 빠지고 리포트는 그대로 나간다.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import statistics
+import urllib.parse
+import xml.etree.ElementTree as ET
+from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
+
+import requests
+
+import config
+
+log = logging.getLogger(__name__)
+
+MODEL = "claude-sonnet-5"
+
+# z = 오늘 등락률 / 최근 20영업일 일간수익률 표준편차
+SIGMA_WINDOW = 20
+BANDS = (
+    (0.5, "quiet", "조용"),
+    (1.0, "normal", "보통"),
+    (2.0, "big", "큰 날"),
+    (float("inf"), "extreme", "이례적"),
+)
+
+MARKETS = {
+    "kr": {
+        "index": "코스피",
+        "symbol": "^KS11",
+        "queries": ["코스피 마감", "코스피 외국인 순매수", "코스피 시황"],
+    },
+    "us": {
+        "index": "S&P 500",
+        "symbol": "^GSPC",
+        # 국내 언론의 뉴욕증시 마감 기사를 쓴다. 읽는 사람도 한국어고,
+        # 간밤 미국장을 한국 시각 아침에 정리한 기사가 이 리포트와 시점이 맞는다.
+        "queries": ["뉴욕증시 마감", "나스닥 마감", "미국 증시 마감"],
+    },
+}
+
+MAX_HEADLINES = 40
+
+
+# ---------------------------------------------------------------- 판정
+def _yahoo_closes(symbol: str, rng: str = "3mo") -> list[float]:
+    try:
+        r = requests.get(
+            f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}",
+            params={"range": rng, "interval": "1d"},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=15,
+        )
+        r.raise_for_status()
+        res = r.json()["chart"]["result"][0]
+        return [c for c in res["indicators"]["quote"][0]["close"] if c is not None]
+    except Exception as exc:
+        log.warning("야후 일봉 실패 (%s): %s", symbol, exc)
+        return []
+
+
+def sigma(symbol: str, window: int = SIGMA_WINDOW) -> float | None:
+    """최근 window 영업일 일간수익률의 표준편차(%)."""
+    closes = _yahoo_closes(symbol)
+    if len(closes) < window + 1:
+        return None
+    rets = [
+        (closes[i] - closes[i - 1]) / closes[i - 1] * 100
+        for i in range(len(closes) - window, len(closes))
+    ]
+    s = statistics.pstdev(rets)
+    return round(s, 3) if s > 0 else None
+
+
+def classify(chg_pct: float, sig: float | None) -> dict:
+    """등락률을 그 시장의 변동성으로 나눠 구간을 정한다."""
+    if not sig:
+        return {"z": None, "band": "unknown", "label": "판정 불가", "sigma": None}
+    z = abs(chg_pct) / sig
+    for edge, band, label in BANDS:
+        if z < edge:
+            break
+    return {"z": round(z, 2), "band": band, "label": label, "sigma": sig}
+
+
+def flow_z(report: dict, history: list[dict]) -> float | None:
+    """외국인+기관 순매수가 최근 대비 얼마나 이례적인가.
+
+    지수는 조용한데 수급만 크게 움직인 날을 잡으려고 둔다. 뉴스는 지수만 보고 쓴다.
+    """
+    def net(rep: dict) -> float | None:
+        iv = rep.get("investors") or {}
+        f, i = iv.get("foreign_eok"), iv.get("institution_eok")
+        if f is None and i is None:
+            return None
+        return (f or 0) + (i or 0)
+
+    today = net(report)
+    past = [v for v in (net(h) for h in history) if v is not None]
+    if today is None or len(past) < 5:
+        return None
+    s = statistics.pstdev(past)
+    return round(today / s, 2) if s > 0 else None
+
+
+# ---------------------------------------------------------------- 기사
+def headlines(queries: list[str], on_date: str) -> list[dict]:
+    """구글 뉴스 RSS 로 그날 기사 제목을 모은다. 본문은 긁지 않는다."""
+    seen: dict[str, dict] = {}
+    for q in queries:
+        url = (
+            "https://news.google.com/rss/search?q="
+            + urllib.parse.quote(q)
+            + "&hl=ko&gl=KR&ceid=KR:ko"
+        )
+        try:
+            r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20)
+            r.raise_for_status()
+            root = ET.fromstring(r.content)
+        except Exception as exc:
+            log.warning("뉴스 조회 실패 (%s): %s", q, exc)
+            continue
+
+        for item in root.findall(".//item"):
+            title = (item.findtext("title") or "").strip()
+            if not title or title in seen:
+                continue
+            try:
+                when = parsedate_to_datetime(item.findtext("pubDate") or "")
+                kst = when.astimezone(config.KST)
+            except Exception:
+                continue
+            if kst.strftime("%Y-%m-%d") != on_date:
+                continue   # 그날 기사만. 지난 기사가 섞이면 엉뚱한 이유가 붙는다
+            seen[title] = {
+                "title": title,
+                "source": (item.findtext("source") or "").strip(),
+                "time": kst.strftime("%H:%M"),
+                "url": (item.findtext("link") or "").strip(),
+            }
+
+    rows = sorted(seen.values(), key=lambda x: x["time"])
+    return rows[:MAX_HEADLINES]
+
+
+# ---------------------------------------------------------------- 프롬프트
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "verdict": {"type": "string"},
+        "points": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "string", "enum": ["높음", "보통", "낮음"]},
+        "conflict": {"type": "string"},
+        "used": {"type": "array", "items": {"type": "integer"}},
+    },
+    "required": ["verdict", "points", "confidence", "conflict", "used"],
+    "additionalProperties": False,
+}
+
+RULES = """규칙
+1. 구간이 '조용' 이면 특별한 이유가 없다는 것이 기본 답이다. 기사가 이유를 붙이더라도
+   최근 변동성 기준으로 평범한 움직임이면 그렇게 말하라. 없는 이유를 만들지 마라.
+2. 기사 주장이 우리 데이터와 어긋나면 conflict 에 적어라. 예: 기사는 반도체 매도라는데
+   반도체 테마가 순매수 1위인 경우. 어긋나는 게 없으면 빈 문자열.
+3. points 는 3~5문장. 각 문장이 데이터에 근거한 것인지 기사에 근거한 것인지 드러나게 쓴다.
+4. 단정하지 마라. '~로 보인다', '~라는 설명이 많다' 처럼 쓴다. 투자 권유는 하지 마라.
+5. 근거로 삼은 기사 번호를 used 에 넣어라.
+6. confidence 는 데이터와 기사가 같은 방향을 가리킬수록 높다. 구간이 '조용' 이면 '낮음'.
+7. 한국어로 쓴다."""
+
+
+def _fmt_report(report: dict, verdict: dict, fz: float | None, market: str) -> str:
+    lines = []
+    idx = {i["name"]: i for i in (report.get("indices") or [])}
+    us = report.get("us") or {}
+
+    if market == "kr":
+        for name in ("코스피", "코스닥"):
+            i = idx.get(name)
+            if i:
+                lines.append(
+                    f"{name} {i['value']:,.2f} ({i['chg_pct']:+.2f}%) "
+                    f"상승 {i.get('up', 0)} / 하락 {i.get('down', 0)}"
+                )
+        iv = report.get("investors") or {}
+        lines.append(
+            f"외국인 {iv.get('foreign_eok', 0):+,.0f}억 · "
+            f"기관 {iv.get('institution_eok', 0):+,.0f}억"
+            + (f" (수급 z={fz})" if fz is not None else "")
+        )
+        tops = report.get("themes_top") or []
+        bots = report.get("themes_bottom") or []
+        if tops:
+            lines.append("자금 유입 테마: " + ", ".join(
+                f"{t['name']} {t['net_eok']:+,.0f}억" for t in tops[:5]))
+        if bots:
+            lines.append("자금 이탈 테마: " + ", ".join(
+                f"{t['name']} {t['net_eok']:+,.0f}억" for t in bots[:3]))
+        sec = report.get("sectors") or []
+        if sec:
+            hot = sorted(sec, key=lambda s: s["chg_pct"], reverse=True)
+            lines.append(
+                "업종 상위: " + ", ".join(f"{s['name']} {s['chg_pct']:+.2f}%" for s in hot[:3])
+                + " / 하위: " + ", ".join(f"{s['name']} {s['chg_pct']:+.2f}%" for s in hot[-3:])
+            )
+        if us.get("indices"):
+            lines.append("간밤 미국: " + ", ".join(
+                f"{i['name']} {i['chg_pct']:+.2f}%" for i in us["indices"]))
+        if us.get("sectors"):
+            s = us["sectors"]
+            lines.append(f"미국 섹터 1위 {s[0]['name']} {s[0]['chg_pct']:+.2f}% / "
+                         f"꼴찌 {s[-1]['name']} {s[-1]['chg_pct']:+.2f}%")
+    else:
+        for i in us.get("indices") or []:
+            lines.append(f"{i['name']} {i['value']:,.2f} ({i['chg_pct']:+.2f}%)")
+        for m in us.get("macro") or []:
+            lines.append(f"{m['name']} {m['value']} ({m['chg_pct']:+.2f}%)")
+        s = us.get("sectors") or []
+        if s:
+            lines.append("섹터 상위: " + ", ".join(f"{x['name']} {x['chg_pct']:+.2f}%" for x in s[:3])
+                         + " / 하위: " + ", ".join(f"{x['name']} {x['chg_pct']:+.2f}%" for x in s[-3:]))
+        st = us.get("stocks") or []
+        if st:
+            lines.append("종목 상위: " + ", ".join(f"{x['name']} {x['chg_pct']:+.2f}%" for x in st[:5]))
+        for e in us.get("extras") or []:
+            lines.append(f"{e['name']} {e['value']} ({e['chg_pct']:+.2f}%)")
+
+    return "\n".join(lines)
+
+
+def _prompt(report: dict, verdict: dict, fz, news: list[dict], market: str) -> str:
+    spec = MARKETS[market]
+    band_line = (
+        f"{spec['index']} 등락률은 최근 {SIGMA_WINDOW}영업일 표준편차({verdict['sigma']}%)의 "
+        f"{verdict['z']}배다. 구간: {verdict['label']}."
+        if verdict["z"] is not None
+        else "변동성 기준을 계산하지 못했다. 구간 판정 없음."
+    )
+    articles = "\n".join(
+        f"{n}. [{a['time']}] {a['title']}" + (f" ({a['source']})" if a["source"] else "")
+        for n, a in enumerate(news, 1)
+    ) or "(그날 기사를 찾지 못했다)"
+
+    return f"""너는 한국 개인투자자가 보는 수급 리포트의 '왜 움직였나' 꼭지를 쓴다.
+
+[오늘 판정 — 이미 계산된 값이다. 다시 판단하지 마라]
+{band_line}
+
+[오늘 데이터]
+{_fmt_report(report, verdict, fz, market)}
+
+[오늘 기사 제목 {len(news)}건]
+{articles}
+
+{RULES}"""
+
+
+# ---------------------------------------------------------------- 실행
+def _ask(prompt: str) -> dict | None:
+    import anthropic
+
+    client = anthropic.Anthropic()
+    res = client.messages.create(
+        model=MODEL,
+        max_tokens=8000,
+        thinking={"type": "adaptive"},
+        messages=[{"role": "user", "content": prompt}],
+        output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
+    )
+    text = next((b.text for b in res.content if b.type == "text"), "")
+    return json.loads(text) if text else None
+
+
+def _one(report: dict, history: list[dict], market: str) -> dict | None:
+    spec = MARKETS[market]
+
+    if market == "kr":
+        idx = {i["name"]: i for i in (report.get("indices") or [])}
+        row = idx.get("코스피")
+        chg = row["chg_pct"] if row else None
+    else:
+        us = report.get("us") or {}
+        row = next((i for i in (us.get("indices") or []) if i["name"] == "S&P 500"), None)
+        chg = row["chg_pct"] if row else None
+
+    if chg is None:
+        log.info("%s 지수가 없어 해설을 건너뜁니다.", spec["index"])
+        return None
+
+    verdict = classify(chg, sigma(spec["symbol"]))
+    fz = flow_z(report, history) if market == "kr" else None
+    news = headlines(spec["queries"], report["date"])
+
+    out = {
+        "index": spec["index"],
+        "chg_pct": chg,
+        "sigma": verdict["sigma"],
+        "z": verdict["z"],
+        "band": verdict["band"],
+        "label": verdict["label"],
+        "flow_z": fz,
+        "sources": news,
+    }
+
+    if not news:
+        # 기사가 없으면 판정만 남긴다. 데이터만으로 이유를 지어내게 두지 않는다.
+        log.info("%s: 그날 기사를 찾지 못해 판정만 남깁니다.", spec["index"])
+        return out
+
+    try:
+        got = _ask(_prompt(report, verdict, fz, news, market))
+    except Exception as exc:
+        log.warning("%s 해설 생성 실패: %s", spec["index"], exc)
+        return out
+
+    if got:
+        out.update(
+            {
+                "verdict": got.get("verdict", ""),
+                "points": got.get("points") or [],
+                "confidence": got.get("confidence", ""),
+                "conflict": got.get("conflict", ""),
+                "used": got.get("used") or [],
+            }
+        )
+        log.info(
+            "%s 해설: %s (구간 %s · 확신 %s · 기사 %d건)",
+            spec["index"], out["verdict"][:40], out["label"],
+            out["confidence"], len(news),
+        )
+    return out
+
+
+def explain(report: dict, history: list[dict]) -> dict | None:
+    """한국·미국 각각 한 번씩. 실패한 쪽만 빠진다."""
+    if not config.ANTHROPIC_API_KEY:
+        log.info("ANTHROPIC_API_KEY 가 없어 증시 해설을 건너뜁니다.")
+        return None
+
+    out: dict = {"model": MODEL, "markets": {}}
+    for market in ("kr", "us"):
+        try:
+            got = _one(report, history, market)
+        except Exception as exc:
+            log.warning("%s 해설 실패(무시): %s", market, exc)
+            continue
+        if got:
+            out["markets"][market] = got
+
+    return out if out["markets"] else None

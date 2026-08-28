@@ -218,6 +218,15 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
         stock_sectors=stock_sectors,
     )
 
+    # 왜 움직였나 (추정). 기사와 이 리포트를 함께 놓고 모델에게 묻는다.
+    # 키가 없거나 실패하면 이 꼭지만 빠진다.
+    try:
+        from src import explain as explainer
+
+        report["explain"] = explainer.explain(report, history)
+    except Exception as exc:
+        log.warning("증시 해설 생성 실패(무시): %s", exc)
+
     store.save_report(report)
     render.build_site()
 

@@ -27,6 +27,14 @@ def build_message(report: dict) -> str:
         lines.append(html.escape(h))
     lines.append("")
 
+    ex = ((report.get("explain") or {}).get("markets") or {}).get("kr")
+    if ex and ex.get("verdict"):
+        lines.append(f"<b>🔎 왜 움직였나 (추정 · 확신 {html.escape(ex.get('confidence', '—'))})</b>")
+        lines.append(html.escape(ex["verdict"]))
+        for pt in (ex.get("points") or [])[:2]:
+            lines.append("· " + html.escape(pt))
+        lines.append("")
+
     tops = report["themes_top"][:5]
     if tops:
         lines.append("<b>💰 자금 유입 테마</b>")
