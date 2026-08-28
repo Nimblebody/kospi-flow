@@ -38,6 +38,37 @@ def _default_date() -> str:
     return datetime.now(config.KST).strftime("%Y%m%d")
 
 
+def data_not_ready_yet(date: str, now: datetime | None = None) -> bool:
+    """그날 수급이 아직 안 나온 게 정상인 시점인가.
+
+    수급이 비어 있을 때 이게 True 면 실패가 아니라 '아직'이다.
+    GitHub 크론은 제때 발사된다는 보장이 없다. 09:30 UTC 예약이 19:53 UTC 에
+    돈 적이 있는데(KST 04:53), 그 시각에 당일 수급이 있을 리 없다.
+    """
+    now = now or datetime.now(config.KST)
+    today = now.strftime("%Y%m%d")
+    if date > today:          # 미래 날짜는 당연히 없다
+        return True
+    if date < today:          # 지난 거래일인데 비었으면 그건 문제다
+        return False
+    return (now.hour, now.minute) < config.DATA_READY_KST
+
+
+def too_early_to_collect(date: str, now: datetime | None = None) -> bool:
+    """지금 긁어봐야 그날 수급이 있을 수 없는가.
+
+    752종목에 1콜씩 3분을 쓰고 나서 비었다는 걸 아는 건 낭비다.
+    아직 오지 않은 날이거나 장이 안 끝났으면 수집 자체를 건너뛴다.
+    """
+    now = now or datetime.now(config.KST)
+    today = now.strftime("%Y%m%d")
+    if date > today:          # 아직 오지 않은 날
+        return True
+    if date < today:          # 이미 끝난 장
+        return False
+    return (now.hour, now.minute) < config.MARKET_CLOSE_KST
+
+
 def backfill(end_date: str, days: int) -> None:
     """과거 영업일 리포트를 확정 수급으로 채운다.
 
@@ -118,6 +149,16 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
             log.info("%s 은 휴장일입니다. 종료합니다.", date)
             sys.exit(0)
 
+        # 수급이 있을 수 없는 시점이면 752종목을 긁기 전에 끝낸다.
+        if too_early_to_collect(date):
+            log.warning(
+                "%s 수급이 나올 시점이 아닙니다(코스피 마감 KST %02d:%02d). "
+                "수집하지 않고 종료합니다. "
+                "지난 거래일을 만들려면 --date 로 날짜를 주세요.",
+                date, *config.MARKET_CLOSE_KST,
+            )
+            sys.exit(0)
+
         names = masters.load_stock_names()
         from src.collect import collect_all
 
@@ -128,10 +169,20 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
 
         # 국내가 비었으면 여기서 멈춘다. 미국까지 1분 더 긁고 나서 죽을 이유가 없다.
         if not snapshot["flows"]:
+            if data_not_ready_yet(date):
+                # 아직 안 나온 것뿐이다. 빨간 X 를 띄울 일이 아니다.
+                log.warning(
+                    "%s 수급이 아직 없습니다. 리포트를 만들지 않고 정상 종료합니다. "
+                    "코스피는 15:30 에 끝나고 확정 수급은 그 뒤에 올라옵니다. "
+                    "KST %02d:%02d 이전 실행에서는 비어 있는 게 정상입니다.",
+                    date, *config.DATA_READY_KST,
+                )
+                sys.exit(0)
+
             log.error(
                 "%s 수급 데이터가 비어 있습니다. 리포트를 만들지 않습니다.\n"
-                "  장이 끝나기 전이면 그날 수급은 아직 없습니다. "
-                "KST 16:00 이전이거나 휴장일이면 정상입니다.\n"
+                "  장이 끝난 시각인데도 비었습니다. 휴장일이거나 KIS 응답에 문제가 있을 수 있습니다. "
+                "휴장일 조회(chk-holiday)가 막히면 여기까지 옵니다.\n"
                 "  지난 거래일을 다시 만들려면 --date 20260827 처럼 날짜를 주세요 "
                 "(Actions 에서는 Run workflow 의 date 칸).",
                 date,
