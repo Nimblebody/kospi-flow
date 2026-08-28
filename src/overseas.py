@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timedelta
 
 import requests
 
@@ -117,6 +118,32 @@ def _save_codes(codes: dict[str, str]) -> None:
         pass
 
 
+def last_closed_us_date(now: datetime | None = None) -> str:
+    """마감이 끝난 가장 최근 현지 날짜(YYYYMMDD). 휴장일은 따지지 않는다.
+
+    한국은 KST, 미국은 현지 시각이라 날짜가 어긋난다. KST 8/28 낮에 '오늘'을
+    물으면 현지는 아직 8/28 새벽이고 장이 열리지도 않았다. 그 시점의 최신
+    마감일은 8/27 이다.
+    """
+    now = (now or datetime.now(config.KST)).astimezone(config.US_TZ)
+    if (now.hour, now.minute) >= config.US_CLOSE:
+        return now.strftime("%Y%m%d")          # 오늘 장이 이미 끝났다
+    return (now - timedelta(days=1)).strftime("%Y%m%d")
+
+
+def _closed_only(
+    rows: list[tuple[str, float]], now: datetime | None = None
+) -> list[tuple[str, float]]:
+    """아직 안 끝난 세션의 행을 버린다.
+
+    KIS 해외주식 일봉(HHDFS76240000)은 장이 열리기도 전에 그날 날짜로 행을 준다.
+    프리마켓 값이라 그걸 종가로 쓰면 '간밤 마감' 이 아니라 '지금 시간외' 가 된다.
+    실제로 엔비디아가 8/27 에 +8.74% 로 끝났는데 화면에는 -1.06% 로 나왔다.
+    """
+    cutoff = last_closed_us_date(now)
+    return [r for r in rows if r[0] <= cutoff]
+
+
 def _series(raw: list[dict]) -> list[tuple[str, float]]:
     """어느 엔드포인트에서 왔든 [(YYYYMMDD, 종가)] 최신순으로 맞춘다.
 
@@ -129,7 +156,7 @@ def _series(raw: list[dict]) -> list[tuple[str, float]]:
         if len(date) == 8 and close > 0:
             out.append((date, close))
     out.sort(key=lambda x: x[0], reverse=True)
-    return out
+    return _closed_only(out)
 
 
 def _chart(rows: list[tuple[str, float]], n: int = 30) -> list[list]:
@@ -255,7 +282,7 @@ def _fetch_yahoo(symbol: str) -> list[tuple[str, float]]:
         date = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y%m%d")
         rows.append((date, float(close)))
     rows.sort(key=lambda x: x[0], reverse=True)
-    return rows
+    return _closed_only(rows)
 
 
 def _fetch_btc() -> dict | None:

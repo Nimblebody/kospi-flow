@@ -100,6 +100,15 @@
 - [x] 34. 마감 후~확정 전 구간의 빈 결과는 exit 0, 그 뒤는 exit 1
       검증: tests/test_schedule.py (두 판정이 서로 모순 없는지 포함)
 
+## 8차 · 미국 시세 현지 날짜 (2026-08-28)
+
+- [x] 35. KIS 해외주식 일봉이 미완료 세션(프리마켓)도 행으로 준다는 것 확인
+      야후와 대조해 8/28 행이 시간외 값임을 확증
+- [x] 36. last_closed_us_date / _closed_only 추가. _series 와 _fetch_yahoo 에 적용
+      시간대는 ZoneInfo("America/New_York") — 서머타임 때문에 고정 오프셋 불가
+- [x] 37. 검증: 엔비디아 -1.06% -> +8.74%, as_of 8/28 -> 8/27
+      tests/test_overseas.py 9개
+
 ---
 
 # 다음 작업 (집에서 이어서)
