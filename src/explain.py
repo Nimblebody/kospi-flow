@@ -164,7 +164,7 @@ def flow_z(report: dict, history: list[dict]) -> float | None:
 
 
 # ---------------------------------------------------------------- 기사
-def headlines(queries: list[str], on_date: str) -> list[dict]:
+def headlines(queries: list[str], on_date: str, limit: int | None = None) -> list[dict]:
     """구글 뉴스 RSS 로 그날 기사 제목을 모은다. 본문은 긁지 않는다."""
     seen: dict[str, dict] = {}
     for q in queries:
@@ -200,7 +200,7 @@ def headlines(queries: list[str], on_date: str) -> list[dict]:
             }
 
     rows = sorted(seen.values(), key=lambda x: x["time"])
-    return rows[:MAX_HEADLINES]
+    return rows[: limit or MAX_HEADLINES]
 
 
 # ---------------------------------------------------------------- 프롬프트
@@ -216,6 +216,38 @@ SCHEMA = {
     "required": ["verdict", "points", "confidence", "conflict", "used"],
     "additionalProperties": False,
 }
+
+SECTOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "note": {"type": "string"},
+        "rows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "line": {"type": "string"},
+                },
+                "required": ["name", "line"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["note", "rows"],
+    "additionalProperties": False,
+}
+
+SECTOR_RULES = """규칙
+1. rows 에 준 업종 이름을 그대로 쓰고, 빠뜨리지 마라. 순서도 그대로.
+2. line 은 업종당 한두 문장, **120자 이내.** 어느 종목이 끌었는지를 먼저 쓴다.
+   금액과 등락률은 준 값을 그대로 쓰고 새로 만들지 마라.
+3. 기사 번호가 붙은 업종만 기사를 근거로 쓸 수 있다. **기사가 없는 업종은 어느 종목이
+   끌었는지까지만 쓰고 이유를 만들지 마라.** '~때문으로 보인다' 를 지어내지 마라.
+4. note 는 20개 업종 전체를 관통하는 한 줄, 100자 이내. 돈이 어느 쪽으로 옮겨 갔는지
+   같은 큰 그림을 쓴다.
+5. 단정하지 마라. 투자 권유는 하지 마라.
+6. 한국어로 쓴다. 종목·업종 이름 외의 영어 낱말은 쓰지 마라."""
 
 RULES = """규칙
 1. 구간이 '조용' 이면 특별한 이유가 없다는 것이 기본 답이다. 기사가 이유를 붙이더라도
@@ -339,8 +371,130 @@ def _prompt(report: dict, verdict: dict, fz, news: list[dict], market: str) -> s
 {RULES}"""
 
 
+# ---------------------------------------------------------------- 업종
+SECTOR_TOP = 10
+
+# 업종 요약은 개별 종목 기사가 있어야 쓸모가 있다. 지수 기사 위주인 공용 풀에
+# '특징주' 를 하나 더해 넓힌다. 실측(2026-08-28)으로 기사가 붙는 업종이 1개에서
+# 5개로 늘었다. '급등주'·'급락주' 까지 넣어도 5개에서 더 늘지 않아 뺐다.
+SECTOR_QUERY = "특징주"
+SECTOR_POOL = 70
+
+
+def match_articles(sectors: list[dict], news: list[dict]) -> dict[str, list[int]]:
+    """제목에 나온 종목 이름으로 기사를 업종에 배정한다.
+
+    업종별로 따로 검색하지 않는 이유는 context-notes.md 에 적어 뒀다. 요약하면,
+    업종 단위로 기사가 나오는 업종이 하루에 3~5개뿐이라 검색을 24번 돌려도
+    대부분 빈손이거나 남의 기사가 온다.
+
+    긴 이름부터 맞춘다. 'SK' 가 'SK하이닉스' 기사에 걸리면 엉뚱한 업종이 된다.
+    """
+    owner: dict[str, str] = {}
+    for sec in sectors:
+        for x in sec.get("stocks") or []:
+            if len(x["name"]) >= 2:
+                owner.setdefault(x["name"], sec["name"])
+
+    names = sorted(owner, key=len, reverse=True)
+    hit: dict[str, list[int]] = {}
+    for i, a in enumerate(news, 1):
+        for nm in names:
+            if nm in a["title"]:
+                hit.setdefault(owner[nm], []).append(i)
+                break          # 한 기사는 한 업종에만
+    return hit
+
+
+def _sector_prompt(report: dict, rows: list[dict], hit: dict, news: list[dict]) -> str:
+    blocks = []
+    for sec in rows:
+        stocks = ", ".join(
+            f"{x['name']} {x['chg_pct']:+.1f}% {x.get('net_eok', 0):+,.0f}억"
+            for x in (sec.get("stocks") or [])[:3]
+        )
+        arts = hit.get(sec["name"]) or []
+        tag = f" | 기사 {arts}" if arts else " | 기사 없음"
+        blocks.append(f"{sec['name']} {sec['chg_pct']:+.2f}% | {stocks}{tag}")
+
+    articles = "\n".join(
+        f"{n}. [{a['time']}] {a['title']}" for n, a in enumerate(news, 1)
+    ) or "(기사 없음)"
+
+    idx = {i["name"]: i for i in (report.get("indices") or [])}
+    k = idx.get("코스피")
+    head = f"코스피 {k['chg_pct']:+.2f}%" if k else ""
+    iv = report.get("investors") or {}
+    head += f" · 외국인 {iv.get('foreign_eok', 0):+,.0f}억 · 기관 {iv.get('institution_eok', 0):+,.0f}억"
+
+    return f"""너는 그날 코스피 업종 등락을 한 줄씩 정리한다. 상위 {SECTOR_TOP}개와 하위 {SECTOR_TOP}개다.
+
+[오늘 시장]
+{head}
+
+[업종 — 등락률 | 그 업종에서 수급이 잡힌 상위 종목 | 붙은 기사 번호]
+{chr(10).join(blocks)}
+
+[오늘 기사 제목 {len(news)}건]
+{articles}
+
+{SECTOR_RULES}"""
+
+
+def sectors(report: dict, news: list[dict]) -> dict | None:
+    """상위/하위 업종을 한 번의 호출로 정리한다.
+
+    업종마다 따로 부르면 3.5배 비싸고 업종 간 비교도 안 된다. 한 번에 넣어도
+    입력이 4,500토큰 남짓이라 지수 해설과 비슷하다.
+    """
+    real = [s for s in (report.get("sectors") or []) if s.get("stocks")]
+    if len(real) < 4:
+        log.info("구성 종목이 붙은 업종이 적어 업종 요약을 건너뜁니다.")
+        return None
+
+    ranked = sorted(real, key=lambda s: s["chg_pct"], reverse=True)
+    rows = ranked[:SECTOR_TOP] + ranked[-SECTOR_TOP:]
+
+    # 공용 풀에 개별 종목 기사를 더한다. 지수 해설 쪽 풀은 건드리지 않는다 —
+    # 거기에 특징주 기사가 섞이면 지수 이야기가 묽어진다.
+    seen = {a["title"] for a in news}
+    extra = [a for a in headlines([SECTOR_QUERY], report["date"], limit=40)
+             if a["title"] not in seen]
+    news = sorted(news + extra, key=lambda x: x["time"])[:SECTOR_POOL]
+
+    hit = match_articles(rows, news)
+
+    try:
+        got = _ask(_sector_prompt(report, rows, hit, news), SECTOR_SCHEMA)
+    except Exception as exc:
+        log.warning("업종 요약 실패: %s", exc)
+        return None
+    if not got:
+        return None
+
+    line = {r["name"]: r["line"] for r in (got.get("rows") or [])}
+    out = {
+        "note": got.get("note", ""),
+        "rows": [
+            {
+                "name": sec["name"],
+                "chg_pct": sec["chg_pct"],
+                "rank": "top" if i < SECTOR_TOP else "bottom",
+                "line": line.get(sec["name"], ""),
+                "sources": hit.get(sec["name"]) or [],
+            }
+            for i, sec in enumerate(rows)
+        ],
+    }
+    log.info(
+        "업종 요약: %d개 (기사가 붙은 업종 %d개) · %s",
+        len(out["rows"]), len(hit), out["note"][:40],
+    )
+    return out
+
+
 # ---------------------------------------------------------------- 실행
-def _ask(prompt: str) -> dict | None:
+def _ask(prompt: str, schema: dict | None = None) -> dict | None:
     import anthropic
 
     client = anthropic.Anthropic()
@@ -349,7 +503,7 @@ def _ask(prompt: str) -> dict | None:
         max_tokens=8000,
         thinking={"type": "adaptive"},
         messages=[{"role": "user", "content": prompt}],
-        output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
+        output_config={"format": {"type": "json_schema", "schema": schema or SCHEMA}},
     )
     u = res.usage
     log.info(
@@ -442,5 +596,14 @@ def explain(report: dict, history: list[dict]) -> dict | None:
             continue
         if got:
             out["markets"][market] = got
+
+    # 업종 요약. 국내 해설이 이미 모아 둔 기사를 그대로 쓴다 (RSS 추가 호출 없음).
+    try:
+        news = (out["markets"].get("kr") or {}).get("sources") or []
+        got = sectors(report, news)
+        if got:
+            out["sectors"] = got
+    except Exception as exc:
+        log.warning("업종 요약 실패(무시): %s", exc)
 
     return out if out["markets"] else None

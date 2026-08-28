@@ -196,8 +196,26 @@ def _sample_explain(market: dict) -> dict:
             ],
         }
 
+    top = sorted(market["sectors"], key=lambda x: x["chg_pct"], reverse=True)
+    real = [x for x in top if x["name"] not in ("종합", "대형주", "중형주", "소형주", "VKOSPI")]
+    picks = real[:10] + real[-10:]
+    sector_rows = [
+        {
+            "name": x["name"], "chg_pct": x["chg_pct"],
+            "rank": "top" if i < 10 else "bottom",
+            "line": (f"{x['name']} 는 구성 종목 중 상위 몇 개가 등락을 끌었습니다."
+                     if i % 3 else ""),
+            "sources": [1, 4] if i % 3 == 1 else [],
+        }
+        for i, x in enumerate(picks)
+    ]
+
     return {
         "model": "claude-sonnet-5",
+        "sectors": {
+            "note": "반도체에서 빠진 돈이 화학·음식료 같은 내수 업종으로 옮겨 간 하루로 보입니다.",
+            "rows": sector_rows,
+        },
         "markets": {
             "kr": block(
                 "코스피", chg, v["sigma"], v["z"], v["label"], v["band"],

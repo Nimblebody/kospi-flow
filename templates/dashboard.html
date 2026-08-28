@@ -134,6 +134,25 @@ header {
   .head-meta { order: 2; width: 100%; margin-left: 0; justify-content: flex-end; }
 }
 
+/* ── 업종 요약 ── */
+.secsum .note, .secdet .note {
+  margin: 0 0 11px; padding: 9px 11px; border-radius: 9px;
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  font-size: calc(12.5px * var(--fs)); font-weight: 500; line-height: 1.55;
+}
+.secsum h3 {
+  margin: 13px 0 3px; font-size: calc(11px * var(--fs)); font-weight: 600;
+  color: var(--ink-3); letter-spacing: .02em;
+}
+.secsum h3:first-of-type { margin-top: 0; }
+.ssrow { padding: 8px 0; border-top: 1px solid var(--line-soft); }
+.ssrow:first-of-type { border-top: 0; }
+.ssrow .l1 { display: flex; align-items: baseline; gap: 7px; }
+.ssrow .sname { font-size: calc(13px * var(--fs)); font-weight: 600; letter-spacing: -.01em; }
+.ssrow .spct { margin-left: auto; font-size: calc(12.5px * var(--fs)); font-weight: 600; }
+.ssrow .sline { margin-top: 3px; font-size: calc(11.5px * var(--fs)); color: var(--ink-2); line-height: 1.55; }
+.ssrow .none { color: var(--ink-3); }
+
 /* ── 왜 움직였나 ── */
 .why h2 { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .why .badge.big { color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, var(--line)); background: var(--up-soft); }
@@ -862,10 +881,34 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
   }
 
   /* ── 5. 업종 ──────────────────────────────────────── */
+  /* 업종 요약. 기사가 붙은 업종은 이유까지, 나머지는 어느 종목이 끌었는지까지만.
+     하루에 업종 단위 기사가 나오는 업종이 3~5개뿐이라 그 이상은 지어내는 것이 된다. */
+  function sectorSummary(d) {
+    var sum = (d.explain || {}).sectors;
+    if (!sum || !(sum.rows || []).length) return "";
+
+    function group(title, rank) {
+      var rows = sum.rows.filter(function (r) { return r.rank === rank; });
+      if (!rows.length) return "";
+      return "<h3>" + title + "</h3>" + rows.map(function (r) {
+        return '<div class="ssrow"><div class="l1">' +
+          '<span class="sname">' + esc(r.name) + '</span>' +
+          '<span class="spct num ' + cls(r.chg_pct) + '">' + pct(r.chg_pct) + '</span></div>' +
+          '<div class="sline' + (r.line ? "" : " none") + '">' +
+          esc(r.line || "설명할 기사가 없습니다.") + '</div></div>';
+      }).join("");
+    }
+
+    return '<div class="card secsum"><h2>업종 요약</h2>' +
+      (sum.note ? '<p class="note">' + esc(sum.note) + '</p>' : "") +
+      group("오른 업종", "top") + group("내린 업종", "bottom") + '</div>';
+  }
+
   function panelSector(d) {
     var s = d.sectors || [];
     var h = '<section class="panel" id="p-sector">';
     if (!s.length) return h + '<div class="card"><div class="empty">업종 데이터 없음</div></div></section>';
+    h += sectorSummary(d);
     var span = Math.max.apply(null, s.map(function (x) { return Math.abs(x.chg_pct); }).concat([0.5]));
     var clickable = s.filter(function (x) { return (x.stocks || []).length; }).length;
     h += '<div class="card"><h2>코스피 업종 등락</h2>' +
@@ -1065,9 +1108,16 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
         var more = n > (sec.stocks || []).length
           ? ' · 수급이 잡힌 ' + n + '종목 중 상위 ' + sec.stocks.length + '개'
           : ' · 수급이 잡힌 ' + n + '종목';
+        // 요약 카드에 쓴 한 줄을 여기서도 보여준다. 같은 말을 두 번 찾지 않게.
+        var sum = ((current || {}).explain || {}).sectors;
+        var line = ((sum && sum.rows) || []).filter(function (r) {
+          return r.name === sec.name;
+        })[0];
+
         box.innerHTML =
           '<div class="card"><h3>' + esc(sec.name) +
             '<span class="num ' + cls(sec.chg_pct) + '">' + pct(sec.chg_pct) + '</span></h3>' +
+          (line && line.line ? '<p class="note">' + esc(line.line) + '</p>' : "") +
           '<p class="sub">순매수 대금 크기순' + more + '</p>' +
           '<div class="list">' + stockRows(sec.stocks || []) + '</div></div>';
         box.scrollIntoView({ block: "nearest", behavior: "smooth" });
