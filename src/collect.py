@@ -127,6 +127,20 @@ def collect_market(kis: KisClient) -> dict:
             }
         )
 
+    # VKOSPI 는 업종시세 칸에 등락률만 온다. 30/40 같은 기준을 쓰려면 레벨이 필요해서
+    # 업종 지수 현재가로 한 번 더 물어본다. 안 되면 없이 간다.
+    try:
+        v = kis.index_price("0503")
+        value = _num(v.get("bstp_nmix_prpr"))
+        if value > 0:
+            out["vkospi"] = {
+                "value": round(value, 2),
+                "chg_pct": _num(v.get("bstp_nmix_prdy_ctrt")),
+            }
+            log.info("VKOSPI %.2f (%+.2f%%)", value, out["vkospi"]["chg_pct"])
+    except Exception as exc:
+        log.info("VKOSPI 레벨 조회 실패(무시): %s", exc)
+
     try:
         for s in kis.index_category_price("K"):
             name = (s.get("hts_kor_isnm") or "").strip()

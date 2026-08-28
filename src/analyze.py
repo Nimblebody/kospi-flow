@@ -417,6 +417,8 @@ def analyze(
         "amount_unit_detected": snapshot.get("amount_unit_detected", ""),
         "headline": build_headline(market, investors, featured, rotation),
         "indices": market["indices"],
+        # 코스피200 변동성지수. 못 받으면 None.
+        "vkospi": market.get("vkospi"),
         # 간밤 미국증시. 수집이 실패했으면 통째로 없다 (화면이 알아서 비운다).
         "us": snapshot.get("us") or None,
         "investors": investors,

@@ -551,12 +551,18 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     var ex = ((d.explain || {}).markets || {})[market];
     if (!ex) return "";
 
-    var badge = (ex.band === "big" || ex.band === "extreme") ? " big" : "";
+    // 배지 두 개를 나란히 둔다. 왼쪽은 '요즘 기준으로 특이한가'(σ), 오른쪽은
+    // '절대로 얼마나 흔들렸나'(통념·제도). 둘이 어긋나는 날이 오히려 정보가 많다.
+    var relBig = (ex.band === "big" || ex.band === "extreme") ? " big" : "";
+    var absBig = /급등락|사이드카|서킷|급등/.test(ex.abs_label || "") ? " big" : "";
     var h = '<div class="card why"><h2>왜 움직였나' +
-      '<span class="badge' + badge + '">' + esc(ex.label) + '</span></h2>';
+      '<span class="badge' + relBig + '" title="최근 20일 변동성 기준">요즘 기준 ' + esc(ex.label) + '</span>' +
+      (ex.abs_label ? '<span class="badge' + absBig + '" title="통념·제도 기준">통념 ' + esc(ex.abs_label) + '</span>' : "") +
+      '</h2>';
 
     var basis = esc(ex.index) + " " + pct(ex.chg_pct);
     if (ex.z != null) basis += " · 최근 20일 변동성(σ " + ex.sigma + "%)의 " + ex.z + "배";
+    if (ex.vkospi) basis += " · VKOSPI " + ex.vkospi.value + " " + esc(ex.vkospi_band || "");
     if (ex.flow_z != null) basis += " · 수급 " + ex.flow_z + "σ";
     h += '<p class="sub">' + basis + '</p>';
 

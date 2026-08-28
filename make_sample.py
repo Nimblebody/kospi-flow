@@ -171,16 +171,19 @@ def _sample_explain(market: dict) -> dict:
     구간 판정은 샘플에서도 진짜 계산으로 낸다. 화면에 적힌 등락률과 z 가 어긋나면
     미리보기를 보는 사람이 읽는 법을 잘못 배운다.
     """
-    from src.explain import classify
+    from src.explain import abs_band, classify, vkospi_band
 
     kospi = next((i for i in market["indices"] if i["name"] == "코스피"), None)
     chg = kospi["chg_pct"] if kospi else 0.0
     v = classify(chg, 4.914)          # 2026-08-28 실측 σ
 
     def block(index, chg, sigma, z, label, band, verdict, points, conflict, conf):
+        vk = {"value": 14.55, "chg_pct": -5.53} if index == "코스피" else None
         return {
             "index": index, "chg_pct": chg, "sigma": sigma, "z": z,
-            "label": label, "band": band, "flow_z": 0.2 if index == "코스피" else None,
+            "label": label, "band": band, "abs_label": abs_band(chg),
+            "vkospi": vk, "vkospi_band": vkospi_band(vk["value"]) if vk else "",
+            "flow_z": 0.2 if index == "코스피" else None,
             "verdict": verdict, "points": points, "conflict": conflict,
             "confidence": conf, "used": [1, 3],
             "sources": [

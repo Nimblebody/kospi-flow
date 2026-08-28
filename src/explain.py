@@ -61,6 +61,26 @@ MARKETS = {
 
 MAX_HEADLINES = 40
 
+# 절대 기준. σ 와 다른 질문에 답한다 — "요즘 기준으로 특이한가" 가 아니라
+# "오늘 얼마나 흔들렸나". 통념(±3% 급등락)과 거래소 안전장치 발동선을 참고선으로 쓴다.
+#
+# 지금 코스피에 대면 ±3% 는 4일에 한 번 걸린다(최근 243거래일 중 26%). 그래서 이걸
+# 해설을 붙일지 말지의 기준으로는 쓰지 않는다. 다만 '절대로는 큰 폭인데 요즘 기준으론
+# 평범' 같은 날을 짚어 주려면 둘 다 있어야 한다.
+#
+# 사이드카는 선물 ±5%, 서킷브레이커는 현물 하락 8/15/20% 가 실제 요건이다. 여기서는
+# 현물 등락률만 보므로 '발동' 이 아니라 '그 근처' 라고만 말한다.
+ABS_BANDS = (
+    (1.5, "보통"),
+    (3.0, "다소 큼"),
+    (5.0, "급등락"),
+    (8.0, "사이드카 발동선 부근"),
+    (float("inf"), "서킷브레이커 발동선 부근"),
+)
+
+# VKOSPI. 통상 30 을 넘으면 시장이 크게 흔들리는 국면으로 본다.
+VKOSPI_BANDS = ((20, "안정"), (30, "경계"), (40, "공포"), (float("inf"), "극심한 공포"))
+
 
 # ---------------------------------------------------------------- 판정
 def _yahoo_closes(symbol: str, rng: str = "3mo") -> list[float]:
@@ -101,6 +121,26 @@ def classify(chg_pct: float, sig: float | None) -> dict:
         if z < edge:
             break
     return {"z": round(z, 2), "band": band, "label": label, "sigma": sig}
+
+
+def abs_band(chg_pct: float) -> str:
+    """통념·제도 기준으로 본 오늘의 크기. 하락 8% 이상만 서킷 문구를 쓴다."""
+    a = abs(chg_pct)
+    for edge, label in ABS_BANDS:
+        if a < edge:
+            break
+    if label == "서킷브레이커 발동선 부근" and chg_pct > 0:
+        return "급등 (서킷 요건은 하락만)"
+    return label
+
+
+def vkospi_band(value: float | None) -> str:
+    if value is None:
+        return ""
+    for edge, label in VKOSPI_BANDS:
+        if value < edge:
+            break
+    return label
 
 
 def flow_z(report: dict, history: list[dict]) -> float | None:
@@ -186,7 +226,9 @@ RULES = """규칙
 4. 단정하지 마라. '~로 보인다', '~라는 설명이 많다' 처럼 쓴다. 투자 권유는 하지 마라.
 5. 근거로 삼은 기사 번호를 used 에 넣어라.
 6. confidence 는 데이터와 기사가 같은 방향을 가리킬수록 높다. 구간이 '조용' 이면 '낮음'.
-7. 한국어로 쓴다."""
+7. 두 기준이 어긋나면 그 사실 자체를 말하라. 예: 절대로는 3% 넘게 빠졌지만 요즘 이
+   시장에서는 평범한 등락이다. 어느 한쪽만 보고 쓰지 마라.
+8. 한국어로 쓴다."""
 
 
 def _fmt_report(report: dict, verdict: dict, fz: float | None, market: str) -> str:
@@ -250,12 +292,19 @@ def _fmt_report(report: dict, verdict: dict, fz: float | None, market: str) -> s
 
 def _prompt(report: dict, verdict: dict, fz, news: list[dict], market: str) -> str:
     spec = MARKETS[market]
-    band_line = (
-        f"{spec['index']} 등락률은 최근 {SIGMA_WINDOW}영업일 표준편차({verdict['sigma']}%)의 "
-        f"{verdict['z']}배다. 구간: {verdict['label']}."
+    rel = (
+        f"상대 기준 — 최근 {SIGMA_WINDOW}영업일 표준편차({verdict['sigma']}%)의 "
+        f"{verdict['z']}배. 구간: {verdict['label']}."
         if verdict["z"] is not None
-        else "변동성 기준을 계산하지 못했다. 구간 판정 없음."
+        else "상대 기준 — 계산하지 못했다."
     )
+    absolute = f"절대 기준 — 통념·제도 기준으로는 '{verdict['abs_label']}'."
+    vk = verdict.get("vkospi")
+    vk_line = (
+        f"VKOSPI {vk['value']} ({vk['chg_pct']:+.2f}%) — {vkospi_band(vk['value'])} 구간."
+        if vk else ""
+    )
+    band_line = "\n".join(x for x in (rel, absolute, vk_line) if x)
     articles = "\n".join(
         f"{n}. [{a['time']}] {a['title']}" + (f" ({a['source']})" if a["source"] else "")
         for n, a in enumerate(news, 1)
@@ -308,6 +357,8 @@ def _one(report: dict, history: list[dict], market: str) -> dict | None:
         return None
 
     verdict = classify(chg, sigma(spec["symbol"]))
+    verdict["abs_label"] = abs_band(chg)
+    verdict["vkospi"] = report.get("vkospi") if market == "kr" else None
     fz = flow_z(report, history) if market == "kr" else None
     news = headlines(spec["queries"], report["date"])
 
@@ -318,6 +369,9 @@ def _one(report: dict, history: list[dict], market: str) -> dict | None:
         "z": verdict["z"],
         "band": verdict["band"],
         "label": verdict["label"],
+        "abs_label": verdict["abs_label"],
+        "vkospi": verdict["vkospi"],
+        "vkospi_band": vkospi_band((verdict["vkospi"] or {}).get("value")),
         "flow_z": fz,
         "sources": news,
     }
@@ -344,9 +398,9 @@ def _one(report: dict, history: list[dict], market: str) -> dict | None:
             }
         )
         log.info(
-            "%s 해설: %s (구간 %s · 확신 %s · 기사 %d건)",
+            "%s 해설: %s (상대 %s · 절대 %s · 확신 %s · 기사 %d건)",
             spec["index"], out["verdict"][:40], out["label"],
-            out["confidence"], len(news),
+            out["abs_label"], out["confidence"], len(news),
         )
     return out
 
