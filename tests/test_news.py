@@ -126,6 +126,24 @@ def test_model_exception_does_not_propagate():
         N._ask = orig
 
 
+def test_schema_closes_every_object():
+    """구조화 출력은 모든 객체에 additionalProperties: False 를 요구한다.
+
+    빠뜨렸더니 API 가 스키마를 거부해 첫 실행이 통째로 실패했다.
+    """
+    def walk(node, path="root"):
+        if isinstance(node, dict):
+            if node.get("type") == "object":
+                assert node.get("additionalProperties") is False, path
+            for k, v in node.items():
+                walk(v, f"{path}.{k}")
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                walk(v, f"{path}[{i}]")
+
+    walk(N.SCHEMA)
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

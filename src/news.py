@@ -161,6 +161,9 @@ def collect(day: str) -> list[dict]:
 # ---------------------------------------------------------------- 요약
 # 모델에게 제목을 다시 쓰게 하지 않는다. 번호만 고르게 하고 실제 기사와는
 # 파이썬이 맞춘다. 제목을 지어내는 일을 원천적으로 막는다.
+# 모든 객체에 additionalProperties: False 가 있어야 한다.
+# 빠뜨렸더니 API 가 스키마를 거부했다(2026-09-02 첫 실행 실패).
+# explain.py 의 SECTOR_SCHEMA 와 같은 모양으로 맞춘다.
 SCHEMA = {
     "type": "object",
     "properties": {
@@ -175,10 +178,12 @@ SCHEMA = {
                     "why": {"type": "string"},
                 },
                 "required": ["index", "why"],
+                "additionalProperties": False,
             },
         },
     },
     "required": ["headline", "points", "top"],
+    "additionalProperties": False,
 }
 
 
