@@ -12,9 +12,13 @@ const REPO = "Nimblebody/kospi-flow";
 const WORKFLOW = "daily.yml";
 const REF = "main";
 
-// 최근 이 시간 안에 실행됐거나 지금 돌고 있으면 다시 돌리지 않는다.
-// 파이프라인이 752콜에 3~4분 걸려서, 연타로 부르면 KIS 쿼터만 축낸다.
-const MIN_GAP_MIN = 30;
+// 연타 방지용 최소 간격. '이미 끝났나' 는 아래 alreadyDoneToday 가 따로 보므로
+// 여기서 길게 잡을 이유가 없다.
+//
+// 처음에 30분으로 뒀다가 실제로 발등을 찍었다. 15:34 실행이 확정 수급이 아직
+// 없어 리포트 없이 끝났는데, 곧바로 다시 부르니 '최근에 실행됨' 으로 막혔다.
+// 헛돈 실행 때문에 진짜 필요한 재시도가 막히면 안 된다.
+const MIN_GAP_MIN = 10;
 
 // 앱이 부를 수 있는 출처. 공개 페이지라 비밀이랄 게 없지만,
 // 아무 데서나 부르는 건 막는다.
@@ -54,6 +58,7 @@ async function recentlyRan(token) {
   const { workflow_runs = [] } = await res.json();
   const now = Date.now();
   return workflow_runs.some((run) => {
+    // 지금 돌고 있으면 겹쳐 돌리지 않는다. 이건 시간과 무관하게 항상 막는다.
     if (run.status === "queued" || run.status === "in_progress") return true;
     return now - Date.parse(run.created_at) < MIN_GAP_MIN * 60_000;
   });
