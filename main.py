@@ -22,7 +22,7 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import config
 from src import analyze as analyzer
@@ -184,6 +184,28 @@ def explain_only(date: str | None) -> None:
             print("   (해설 없음 — 판정만)")
 
 
+def run_news(day: str) -> None:
+    """증시 뉴스를 모아 요약하고 저장한다.
+
+    수급 리포트와 따로 돈다. 01:30 KST 에 도는데, 그 시각의 '어제'가
+    직전 거래일이라 그날 장을 정리한 기사가 다 들어와 있다.
+    """
+    from src import news
+
+    report = news.build(day)
+    if not report:
+        log.error("%s 뉴스 리포트를 만들지 못했습니다.", day)
+        sys.exit(1)
+
+    store.save_news(report)
+    render.build_site()
+
+    log.info("  %s", report["headline"])
+    for p in report["points"]:
+        log.info("    · %s", p)
+    log.info("  중요 기사 %d건", len(report["top"]))
+
+
 def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
     themes, theme_source = masters.load_themes()
     stock_themes = masters.build_stock_to_themes(themes)
@@ -329,6 +351,11 @@ def main() -> None:
         help="미국 시세 후보 심볼을 전부 넣어 보고 되는 것을 표로 찍는다",
     )
     p.add_argument(
+        "--news",
+        action="store_true",
+        help="증시 뉴스를 모아 요약한다 (기본: 어제 KST). 수급 리포트와 별개로 돈다",
+    )
+    p.add_argument(
         "--build-only",
         action="store_true",
         help="KIS 호출 없이 web/ 정적 파일만 다시 만든다 (화면만 고쳤을 때)",
@@ -358,6 +385,13 @@ def main() -> None:
     # 화면만 고친 경우. 데이터는 web/data 에 이미 있으니 API 를 부를 이유가 없다.
     if args.build_only:
         render.build_site()
+        return
+
+    if args.news:
+        news_day = args.date or (
+            datetime.now(config.KST) - timedelta(days=1)
+        ).strftime("%Y%m%d")
+        run_news(f"{news_day[:4]}-{news_day[4:6]}-{news_day[6:]}")
         return
 
     if args.backfill:

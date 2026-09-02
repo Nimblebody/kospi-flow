@@ -115,6 +115,22 @@ def save_raw(snapshot: dict) -> Path:
     return path
 
 
+def news_path(date: str) -> Path:
+    return config.DATA_DIR / f"news-{date}.json"
+
+
+def save_news(report: dict) -> Path:
+    """뉴스는 리포트와 따로 둔다. 실패해도 수급 리포트에 영향이 없어야 한다.
+
+    작아서(20건 남짓) 줄일 필요가 없다. 날짜별 파일과 news-latest.json 둘 다 쓴다.
+    """
+    path = news_path(report["date"])
+    path.write_text(_dump(report), encoding="utf-8")
+    (config.DATA_DIR / "news-latest.json").write_text(_dump(report), encoding="utf-8")
+    log.info("뉴스 저장: %s", path)
+    return path
+
+
 def load_report(date: str) -> dict | None:
     path = report_path(date)
     if not path.exists():

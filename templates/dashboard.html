@@ -356,6 +356,20 @@ ul.headline { margin: 0; padding: 0; }
 .members td { padding: 4px 0; border-top: 1px solid var(--line-soft); text-align: right; }
 .members td:first-child { text-align: left; color: var(--ink); }
 .members .sc { color: var(--ink-3); font-size: calc(10.5px * var(--fs)); margin-left: 4px; }
+/* ── 뉴스 ─────────────────────────────────────────── */
+.nlead { margin: 0 0 9px; font-size: 15px; font-weight: 600; line-height: 1.45; letter-spacing: -.01em; }
+.npoints { margin: 0; padding-left: 17px; }
+.npoints li { margin: 5px 0; line-height: 1.6; }
+.nlist { display: flex; flex-direction: column; }
+.nitem { display: block; padding: 10px 0; border-top: 1px solid var(--line-soft); text-decoration: none; color: inherit; }
+.nitem:first-child { border-top: 0; }
+.nitem:active { background: var(--surface-2); }
+.nitem .nt { display: block; font-size: 13.5px; font-weight: 600; line-height: 1.45; letter-spacing: -.01em; }
+.nitem .nw { display: block; margin-top: 3px; font-size: 11.5px; color: var(--ink-2); line-height: 1.5; }
+.nitem .nm { display: block; margin-top: 4px; font-size: 10.5px; color: var(--ink-3); }
+.nitem .rank { display: inline-block; min-width: 17px; margin-right: 5px; color: var(--ink-3); font-weight: 500; }
+.nitem .via { margin-left: 5px; padding: 0 4px; border: 1px solid var(--line); border-radius: 4px; }
+
 .members .merged {
   margin: 9px 0 0; padding: 7px 9px; border-radius: 7px;
   background: var(--surface-2); border: 1px solid var(--line-soft);
@@ -454,6 +468,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
   <div class="markets" id="markets" role="tablist" aria-label="시장">
     <button role="tab" aria-selected="true" data-market="kr">한국</button>
     <button role="tab" aria-selected="false" data-market="us">미국</button>
+    <button role="tab" aria-selected="false" data-market="news">뉴스</button>
     <button role="tab" aria-selected="false" data-market="check">체크리스트</button>
   </div>
   <nav class="tabs" id="tabs" role="tablist">
@@ -554,7 +569,8 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     var main = document.getElementById("main");
     main.innerHTML =
       panelSummary(d) + panelTheme(d) + panelMove(d) + panelStock(d) + panelSector(d) +
-      panelUsSummary(d) + panelUsStock(d) + panelUsSector(d) + panelCheck(d) +
+      panelUsSummary(d) + panelUsStock(d) + panelUsSector(d) +
+      panelNews() + panelCheck(d) +
       '<footer>테마 분류: ' + esc(d.theme_source || "—") + '<br>' +
       '수집 ' + esc((d.collected_at || "").replace("T", " ").slice(0, 16)) + ' · ' +
       '투자 판단의 근거로 쓰기 전에 원 데이터를 확인하세요.</footer>';
@@ -1200,6 +1216,49 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
       chart + '</div>';
   }
 
+  /* ── 뉴스 ─────────────────────────────────────────
+     수급 리포트와 다른 시각(01:30 KST)에 따로 만들어져서 데이터도 따로 받는다.
+     아직 없으면 안내만 띄우고 나머지 화면은 그대로 돈다. */
+  var newsData = null;
+
+  function panelNews() {
+    var n = newsData;
+    var h = '<section class="panel" id="p-news">';
+
+    if (!n) {
+      return h + '<div class="card"><h2>증시 뉴스</h2>' +
+        '<div class="empty">아직 뉴스 요약이 없습니다.<br>' +
+        '매일 새벽에 전날 기사를 모아 정리합니다.</div></div></section>';
+    }
+
+    h += '<div class="card"><h2>' + esc(n.date) + ' 증시 뉴스</h2>' +
+         '<p class="sub">기사 ' + (n.collected || 0) + '건을 모아 ' +
+         (n.pool || 0) + '건을 읽고 정리했습니다. 제목만 보고 쓴 요약이라 ' +
+         '본문과 다를 수 있습니다.</p>';
+    if (n.headline) h += '<p class="nlead">' + esc(n.headline) + '</p>';
+    if ((n.points || []).length) {
+      h += '<ul class="npoints">' +
+           n.points.map(function (x) { return "<li>" + esc(x) + "</li>"; }).join("") +
+           '</ul>';
+    }
+    h += '</div>';
+
+    var top = n.top || [];
+    h += '<div class="card"><h2>중요 기사 ' + top.length + '건</h2>' +
+         '<p class="sub">제목을 누르면 기사로 갑니다.</p><div class="nlist">';
+    h += top.length ? top.map(function (t, i) {
+      var via = t.direct ? "" : '<span class="via">구글 뉴스 경유</span>';
+      return '<a class="nitem" href="' + esc(t.url) + '" target="_blank" rel="noopener noreferrer">' +
+        '<span class="nt"><span class="rank num">' + (i + 1) + '</span>' + esc(t.title) + '</span>' +
+        (t.why ? '<span class="nw">' + esc(t.why) + '</span>' : "") +
+        '<span class="nm">' + esc(t.source) + ' · ' + esc(t.time) + via + '</span>' +
+        '</a>';
+    }).join("") : '<div class="empty">데이터 없음</div>';
+    h += '</div></div>';
+
+    return h + "</section>";
+  }
+
   function panelCheck(d) {
     var u = d.us || {};
     var extras = u.extras || [];
@@ -1239,7 +1298,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
      갈리고, 각 시장에서 마지막에 보던 화면으로 돌아온다. 리포트를 다시 그려도
      (날짜 변경·새로고침) 보던 자리를 지키려고 render() 끝에서 다시 맞춘다. */
   var market = "kr";
-  var lastPanel = { kr: "p-sum", us: "p-us-sum", check: "p-check" };
+  var lastPanel = { kr: "p-sum", us: "p-us-sum", news: "p-news", check: "p-check" };
 
   try {
     var savedMarket = localStorage.getItem("market");
@@ -1382,6 +1441,14 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
   /* ── 날짜 선택 ─────────────────────────────────────
      index.json 의 dates 를 채워 넣고, 고르면 그날 리포트를 불러 다시 그린다.
      인라인 단일 HTML(build_standalone)에는 옆에 데이터 파일이 없으므로 띄우지 않는다. */
+  function loadNews() {
+    // 리포트와 다른 시각에 만들어져서 따로 받는다. 없거나 실패해도 그냥 넘어간다.
+    return fetch("data/news-latest.json?t=" + Date.now())
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (n) { newsData = n; })
+      .catch(function () { newsData = null; });
+  }
+
   function setupDatePicker(current) {
     fetch("data/index.json?t=" + Date.now())
       .then(function (r) { return r.ok ? r.json() : null; })
@@ -1428,9 +1495,12 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     fetch("data/latest.json?t=" + Date.now())
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (d) {
-        render(d);
-        setupDatePicker(d.date);
-        document.getElementById("refresh").hidden = false;
+        // 뉴스를 먼저 받아 두고 한 번에 그린다. 없으면 안내만 뜬다.
+        return loadNews().then(function () {
+          render(d);
+          setupDatePicker(d.date);
+          document.getElementById("refresh").hidden = false;
+        });
       })
       .catch(function (err) {
         document.getElementById("main").innerHTML =

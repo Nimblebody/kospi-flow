@@ -1,0 +1,82 @@
+name: 증시 뉴스 요약
+
+# 전날 증시 기사를 모아 한 편으로 정리하고 중요 기사 20건을 고른다.
+# KIS 는 부르지 않는다. 수급 리포트와 따로 돌아서, 뉴스가 실패해도 리포트는 그대로다.
+#
+# 예약은 GitHub 이 아니라 Cloudflare Worker 가 건다 (01:30 KST).
+# GitHub 크론이 제때 발사되지 않아서다 — worker/README.md 참고.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "YYYYMMDD (비우면 어제, KST)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: kospi-flow
+  cancel-in-progress: false
+
+jobs:
+  news:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: 키 확인
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::error::ANTHROPIC_API_KEY 가 비어 있습니다."
+            echo "Settings > Secrets and variables > Actions 에 등록하세요."
+            exit 1
+          fi
+          echo "ANTHROPIC_API_KEY : 설정됨 (${#ANTHROPIC_API_KEY}자)"
+
+      - name: 뉴스 요약 생성
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "${{ inputs.date }}" ]; then
+            python main.py --news --date "${{ inputs.date }}"
+          else
+            python main.py --news
+          fi
+
+      - name: 결과 커밋
+        run: |
+          git config user.name "kospi-flow bot"
+          git config user.email "actions@github.com"
+          git add web/data web/index.html web/manifest.webmanifest web/sw.js
+          if git diff --staged --quiet; then
+            echo "변경 없음"
+          else
+            git commit -m "증시 뉴스 $(TZ=Asia/Seoul date -d yesterday +%Y-%m-%d)"
+            git pull --rebase --autostash
+            git push
+          fi
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: web
+      - id: deploy
+        uses: actions/deploy-pages@v4

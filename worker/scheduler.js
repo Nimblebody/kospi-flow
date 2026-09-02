@@ -9,8 +9,34 @@
 // 같은 시각에 겹쳐도 두 번 돌지 않는다.
 
 const REPO = "Nimblebody/kospi-flow";
-const WORKFLOW = "daily.yml";
 const REF = "main";
+
+// 크론마다 부르는 워크플로가 다르다. 목록에 없는 크론은 수급 리포트로 본다.
+//   30 16 * * *  = 01:30 KST  뉴스 요약 (전날 기사)
+//   그 밖        = 수급 리포트
+//
+// done 은 '오늘 몫이 이미 끝났나' 를 보는 파일이다. 뉴스는 전날치를 만들므로
+// 리포트와 기준 날짜가 하루 다르다.
+const JOBS = {
+  news: {
+    workflow: "news.yml",
+    label: "뉴스",
+    done: "web/data/news-latest.json",
+    forDate: (kstNow) => new Date(kstNow.getTime() - 86400000),
+  },
+  report: {
+    workflow: "daily.yml",
+    label: "수급 리포트",
+    done: "web/data/latest.json",
+    forDate: (kstNow) => kstNow,
+  },
+};
+
+const CRON_JOB = { "30 16 * * *": "news" };
+
+function jobFor(cron) {
+  return JOBS[CRON_JOB[cron] || "report"];
+}
 
 // 연타 방지용 최소 간격. '이미 끝났나' 는 아래 alreadyDoneToday 가 따로 보므로
 // 여기서 길게 잡을 이유가 없다.
@@ -47,9 +73,9 @@ function gh(path, token, init = {}) {
   });
 }
 
-async function recentlyRan(token) {
+async function recentlyRan(token, job) {
   const res = await gh(
-    `/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=5`,
+    `/repos/${REPO}/actions/workflows/${job.workflow}/runs?per_page=5`,
     token,
   );
   // 확인에 실패하면 막지 않는다. 못 도는 것보다 한 번 더 도는 편이 낫다.
@@ -64,52 +90,58 @@ async function recentlyRan(token) {
   });
 }
 
-// 저장소에 커밋된 최신 리포트. 재시도 크론이 헛돌지 않게 이걸 먼저 본다.
+// 저장소에 커밋된 결과물. 재시도 크론이 헛돌지 않게 이걸 먼저 본다.
 // raw 는 CDN 캐시가 몇 분 끼지만, 재시도 간격이 한 시간이라 문제되지 않는다.
-const LATEST_JSON =
-  `https://raw.githubusercontent.com/${REPO}/${REF}/web/data/latest.json`;
-
-function todayKST() {
-  // KST = UTC+9. 리포트의 date 필드와 같은 YYYY-MM-DD 모양으로 맞춘다.
-  return new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10);
+function nowKST() {
+  return new Date(Date.now() + 9 * 3600 * 1000);   // KST = UTC+9
 }
 
-async function alreadyDoneToday() {
+function ymd(d) {
+  return d.toISOString().slice(0, 10);
+}
+
+async function alreadyDone(job) {
+  const want = ymd(job.forDate(nowKST()));
   try {
-    const res = await fetch(`${LATEST_JSON}?t=${Date.now()}`, {
-      headers: { "User-Agent": "kospi-flow-scheduler" },
-      cf: { cacheTtl: 0 },
-    });
-    if (!res.ok) return false;
+    const res = await fetch(
+      `https://raw.githubusercontent.com/${REPO}/${REF}/${job.done}?t=${Date.now()}`,
+      { headers: { "User-Agent": "kospi-flow-scheduler" }, cf: { cacheTtl: 0 } },
+    );
+    if (!res.ok) return { done: false, want };
     const { date } = await res.json();
-    return date === todayKST();
+    return { done: date === want, want };
   } catch {
     // 확인 못 하면 막지 않는다. 못 도는 것보다 한 번 더 도는 편이 낫다.
-    return false;
+    return { done: false, want };
   }
 }
 
-async function trigger(env, { stage = "final", date = "", force = false } = {}) {
+async function trigger(env, { job = JOBS.report, stage = "final", date = "", force = false } = {}) {
   const token = env.GITHUB_TOKEN;
   if (!token) return { ok: false, status: 500, message: "GITHUB_TOKEN 이 없습니다" };
 
   if (!force) {
-    if (await alreadyDoneToday()) {
-      return { ok: true, skipped: true, message: `오늘(${todayKST()}) 리포트가 이미 있습니다` };
+    const { done, want } = await alreadyDone(job);
+    if (done) {
+      return { ok: true, skipped: true, message: `${job.label} ${want} 이 이미 있습니다` };
     }
-    if (await recentlyRan(token)) {
-      return { ok: true, skipped: true, message: `최근 ${MIN_GAP_MIN}분 안에 이미 실행됐습니다` };
+    if (await recentlyRan(token, job)) {
+      return { ok: true, skipped: true, message: `${job.label}: 최근 ${MIN_GAP_MIN}분 안에 이미 실행됐습니다` };
     }
   }
 
+  // 뉴스 워크플로는 stage 입력을 받지 않는다. 없는 입력을 보내면 422 가 난다.
+  const inputs = job.workflow === "news.yml" ? { date } : { stage, date };
   const res = await gh(
-    `/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`,
+    `/repos/${REPO}/actions/workflows/${job.workflow}/dispatches`,
     token,
-    { method: "POST", body: JSON.stringify({ ref: REF, inputs: { stage, date } }) },
+    { method: "POST", body: JSON.stringify({ ref: REF, inputs }) },
   );
 
   // 성공은 204 No Content 다. 본문이 없다.
-  if (res.status === 204) return { ok: true, skipped: false, message: "실행을 요청했습니다" };
+  if (res.status === 204) {
+    return { ok: true, skipped: false, message: `${job.label} 실행을 요청했습니다` };
+  }
 
   const body = await res.text();
   return {
@@ -121,9 +153,10 @@ async function trigger(env, { stage = "final", date = "", force = false } = {}) 
 
 export default {
   // 크론. Cloudflare 도 UTC 기준이다.
-  //   30 7  * * *  = 16:30 KST  본 실행
-  //   0  9  * * *  = 18:00 KST  1차 재시도
-  //   0  11 * * *  = 20:00 KST  2차 재시도
+  //   30 7  * * *  = 16:30 KST  수급 리포트 본 실행
+  //   0  9  * * *  = 18:00 KST  수급 리포트 1차 재시도
+  //   0  11 * * *  = 20:00 KST  수급 리포트 2차 재시도
+  //   30 16 * * *  = 01:30 KST  뉴스 요약 (전날 기사)
   //
   // 요일 조건(1-5)을 일부러 넣지 않는다. 표기가 한 칸 밀리면 금요일을 통째로
   // 놓치는데, 그건 주말에 헛도는 것보다 훨씬 나쁘다. 휴장 판단은 KIS 의
@@ -132,9 +165,10 @@ export default {
   //
   // 재시도는 오늘 리포트가 없을 때만 실제로 돈다. 있으면 위에서 걸러진다.
   async scheduled(event, env, ctx) {
+    const job = jobFor(event.cron);
     ctx.waitUntil(
-      trigger(env).then((r) =>
-        console.log(`cron ${event.cron}:`, JSON.stringify(r)),
+      trigger(env, { job }).then((r) =>
+        console.log(`cron ${event.cron} (${job.label}):`, JSON.stringify(r)),
       ),
     );
   },
@@ -152,7 +186,10 @@ export default {
 
     // 상태 확인용. 토큰 없이도 살아있는지 볼 수 있다.
     if (url.pathname === "/health") {
-      return Response.json({ ok: true, repo: REPO, workflow: WORKFLOW }, { headers: head });
+      return Response.json(
+        { ok: true, repo: REPO, jobs: Object.keys(JOBS), crons: CRON_JOB },
+        { headers: head },
+      );
     }
 
     // 열쇠를 설정해 뒀으면 맞아야 한다. 앱에 박아 두는 값이라 비밀은 아니지만,
@@ -161,7 +198,9 @@ export default {
       return Response.json({ ok: false, message: "key 가 맞지 않습니다" }, { status: 403, headers: head });
     }
 
+    // /?job=news 로 뉴스만 따로 돌릴 수 있다. 기본은 수급 리포트.
     const result = await trigger(env, {
+      job: JOBS[url.searchParams.get("job") || "report"] || JOBS.report,
       stage: url.searchParams.get("stage") || "final",
       date: url.searchParams.get("date") || "",
     });
