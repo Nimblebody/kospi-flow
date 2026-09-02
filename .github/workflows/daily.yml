@@ -1,10 +1,16 @@
 name: 코스피 수급 리포트
 
+# 예약(schedule)을 뺐다. 2026-08-28.
+#
+# GitHub 크론은 제때 발사된다는 보장이 없다. 이 저장소에서 실제로 일어난 일.
+#   - 등록 후 예약이 딱 한 번 발사됐다 (기대: 하루 두 번)
+#   - 그것도 09:30 UTC 예약이 19:53 UTC 에 돌았다 (KST 04:53, 10시간 밀림)
+#   - 정작 필요한 16:10 / 18:30 KST 에는 돌지 않았다
+#
+# GitHub 문서도 '부하가 높으면 schedule 이벤트가 지연될 수 있다' 고 적어 두었다.
+# 저부하 시간대로 옮기는 정도로는 해결되지 않아서, 밖에서 workflow_dispatch 를
+# 정시에 때리는 쪽으로 간다. 아래 dispatch 입력은 그대로 두면 된다.
 on:
-  schedule:
-    # GitHub 크론은 UTC 기준. 한국시간 = UTC + 9시간.
-    - cron: "10 7 * * 1-5"   # 16:10 KST · 장 마감 직후 속보
-    - cron: "30 9 * * 1-5"   # 18:30 KST · 수급 확정
   workflow_dispatch:
     inputs:
       stage:
@@ -20,9 +26,6 @@ on:
         required: false
         default: ""
         type: string
-
-# GitHub Actions 크론은 혼잡하면 5~30분 늦게 시작할 수 있습니다.
-# 정시 실행이 꼭 필요하면 시간을 앞당겨 잡으세요.
 
 permissions:
   contents: write        # 리포트 JSON 을 저장소에 커밋
@@ -54,8 +57,6 @@ jobs:
         run: |
           if [ -n "${{ inputs.stage }}" ]; then
             echo "value=${{ inputs.stage }}" >> "$GITHUB_OUTPUT"
-          elif [ "${{ github.event.schedule }}" = "10 7 * * 1-5" ]; then
-            echo "value=flash" >> "$GITHUB_OUTPUT"
           else
             echo "value=final" >> "$GITHUB_OUTPUT"
           fi
