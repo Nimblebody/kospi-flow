@@ -1231,10 +1231,14 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
         '매일 새벽에 전날 기사를 모아 정리합니다.</div></div></section>';
     }
 
+    // 수집 창을 그대로 밝힌다. '어제 뉴스' 라고만 하면 새벽 기사가 섞인 걸
+    // 숨기는 셈이 된다.
+    var w = n.window || {};
+    var span = w.from && w.to ? w.from + ' ~ ' + w.to + ' 기사' : '';
     h += '<div class="card"><h2>' + esc(n.date) + ' 증시 뉴스</h2>' +
-         '<p class="sub">기사 ' + (n.collected || 0) + '건을 모아 ' +
-         (n.pool || 0) + '건을 읽고 정리했습니다. 제목만 보고 쓴 요약이라 ' +
-         '본문과 다를 수 있습니다.</p>';
+         '<p class="sub">' + (span ? esc(span) + ' ' : '') +
+         (n.collected || 0) + '건을 모아 ' + (n.pool || 0) + '건을 읽고 정리했습니다. ' +
+         '제목만 보고 쓴 요약이라 본문과 다를 수 있습니다.</p>';
     if (n.headline) h += '<p class="nlead">' + esc(n.headline) + '</p>';
     if ((n.points || []).length) {
       h += '<ul class="npoints">' +

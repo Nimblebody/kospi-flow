@@ -144,6 +144,36 @@ def test_schema_closes_every_object():
     walk(N.SCHEMA)
 
 
+# ------------------------------------------------------------ 수집 창
+def test_window_days_covers_overnight():
+    """01:30 에 돌면 어제와 오늘 이틀이 걸린다. 새벽 기사를 놓치면 안 된다."""
+    from datetime import datetime, timedelta
+    import config
+
+    since = datetime(2026, 9, 2, 0, 0, tzinfo=config.KST)
+    now = datetime(2026, 9, 3, 1, 30, tzinfo=config.KST)
+    assert N._window_days(since, now) == ["2026-09-02", "2026-09-03"]
+
+
+def test_window_days_same_day():
+    from datetime import datetime
+    import config
+
+    since = datetime(2026, 9, 2, 0, 0, tzinfo=config.KST)
+    now = datetime(2026, 9, 2, 18, 0, tzinfo=config.KST)
+    assert N._window_days(since, now) == ["2026-09-02"]
+
+
+def test_window_days_is_capped():
+    """옛 날짜를 손으로 넣어도 무한정 훑지 않는다."""
+    from datetime import datetime
+    import config
+
+    since = datetime(2026, 1, 1, 0, 0, tzinfo=config.KST)
+    now = datetime(2026, 9, 2, 18, 0, tzinfo=config.KST)
+    assert len(N._window_days(since, now)) == 3
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

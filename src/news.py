@@ -80,7 +80,7 @@ def _is_stock(title: str) -> bool:
 
 
 def _from_feeds(since: datetime) -> list[dict]:
-    """국내 언론사 RSS. 링크가 기사 주소 그대로다."""
+    """국내 언론사 RSS. 링크가 기사 주소 그대로다. since 이후 전부."""
     out: list[dict] = []
     for source, url in FEEDS:
         try:
@@ -114,34 +114,58 @@ def _from_feeds(since: datetime) -> list[dict]:
     return out
 
 
-def _from_google(day: str) -> list[dict]:
+def _window_days(since: datetime, now: datetime) -> list[str]:
+    """수집 창에 걸리는 KST 날짜들. headlines() 가 하루 단위라 쪼개서 부른다.
+
+    01:30 에 돌면 어제와 오늘 이틀이 걸린다. 창이 지나치게 길면(옛 날짜를 손으로
+    지정한 경우) 그날 하루만 본다 — 그럴 땐 어차피 RSS 에 옛 기사가 안 남아 있다.
+    """
+    days, d = [], since
+    while d.date() <= now.date() and len(days) < 3:
+        days.append(d.strftime("%Y-%m-%d"))
+        d += timedelta(days=1)
+    return days or [since.strftime("%Y-%m-%d")]
+
+
+def _from_google(days: list[str], since: datetime) -> list[dict]:
     """구글 뉴스로 빈자리를 메운다. 링크는 중간 페이지를 거친다."""
     out = []
-    for a in headlines(GOOGLE_QUERIES, day, limit=200):
-        title = _clean(a["title"])
-        if not _is_stock(title):
-            continue
-        try:
-            at = datetime.strptime(f"{day} {a['time']}", "%Y-%m-%d %H:%M").replace(
-                tzinfo=config.KST
-            )
-        except ValueError:
-            continue
-        out.append({
-            "title": title,
-            "source": a["source"] or "구글 뉴스",
-            "time": at.strftime("%m-%d %H:%M"),
-            "at": at,
-            "url": a["url"],
-            "direct": False,
-        })
+    for day in days:
+        for a in headlines(GOOGLE_QUERIES, day, limit=200):
+            title = _clean(a["title"])
+            if not _is_stock(title):
+                continue
+            try:
+                at = datetime.strptime(f"{day} {a['time']}", "%Y-%m-%d %H:%M").replace(
+                    tzinfo=config.KST
+                )
+            except ValueError:
+                continue
+            if at < since:
+                continue
+            out.append({
+                "title": title,
+                "source": a["source"] or "구글 뉴스",
+                "time": at.strftime("%m-%d %H:%M"),
+                "at": at,
+                "url": a["url"],
+                "direct": False,
+            })
     return out
 
 
-def collect(day: str) -> list[dict]:
-    """day(YYYY-MM-DD, KST) 00:00 이후 기사를 모은다. 직접링크를 앞에 둔다."""
+def collect(day: str) -> tuple[list[dict], dict]:
+    """day 00:00(KST)부터 지금까지의 기사를 모은다. 직접링크를 앞에 둔다.
+
+    창 끝을 '지금' 으로 두는 이유. 01:30 에 도는데 그 사이 새벽에도 기사가
+    올라온다. 잘라내면 가장 최신 기사를 놓친다.
+
+    두 출처가 같은 창을 봐야 한다. 예전엔 구글만 하루로 잘려 있어서, 화면에는
+    어제 날짜를 써 놓고 목록은 오늘 기사만 늘어서는 일이 있었다.
+    """
     since = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=config.KST)
-    rows = _from_feeds(since) + _from_google(day)
+    now = datetime.now(config.KST)
+    rows = _from_feeds(since) + _from_google(_window_days(since, now), since)
 
     # 같은 사건이면 직접링크를 남긴다. 그다음은 이른 기사.
     best: dict[str, dict] = {}
@@ -153,9 +177,13 @@ def collect(day: str) -> list[dict]:
         "뉴스 %d건 수집 (직접링크 %d · 구글 %d)",
         len(out), sum(1 for r in out if r["direct"]), sum(1 for r in out if not r["direct"]),
     )
+    window = {
+        "from": since.strftime("%Y-%m-%d %H:%M"),
+        "to": now.strftime("%Y-%m-%d %H:%M"),
+    }
     for r in out:
         r.pop("at", None)
-    return out
+    return out, window
 
 
 # ---------------------------------------------------------------- 요약
@@ -254,7 +282,7 @@ def summarize(day: str, rows: list[dict]) -> dict | None:
 
 def build(day: str) -> dict | None:
     """그날 뉴스 리포트 한 벌."""
-    rows = collect(day)
+    rows, window = collect(day)
     if not rows:
         log.warning("%s 기사를 하나도 못 모았습니다.", day)
         return None
@@ -266,6 +294,7 @@ def build(day: str) -> dict | None:
     return {
         "date": day,
         "generated_at": datetime.now(config.KST).isoformat(timespec="seconds"),
+        "window": window,
         "collected": len(rows),
         "pool": min(len(rows), POOL),
         "headline": summary["headline"],
