@@ -30,9 +30,24 @@ const JOBS = {
     done: "web/data/latest.json",
     forDate: (kstNow) => kstNow,
   },
+  // 저녁에 같은 날짜를 다시 만들어 덮어쓴다. 이미 있어도 건너뛰지 않는다.
+  // 16:30 값은 장 마감 직후라 뒤에 정정이 붙는다(실측 기관 기준 최대 18.9%).
+  // 애프터마켓(16:00~20:00)까지 끝난 뒤라 그날 아는 한 가장 확정에 가깝다.
+  //
+  // 실패한 날에는 이게 재시도 역할도 겸한다. 그래서 20:00 재시도를 따로 두지 않는다.
+  refresh: {
+    workflow: "daily.yml",
+    label: "수급 리포트 확정 갱신",
+    done: "web/data/latest.json",
+    forDate: (kstNow) => kstNow,
+    ignoreDone: true,
+  },
 };
 
-const CRON_JOB = { "30 16 * * *": "news" };
+const CRON_JOB = {
+  "30 16 * * *": "news",      // 01:30 KST
+  "30 11 * * *": "refresh",   // 20:30 KST
+};
 
 function jobFor(cron) {
   return JOBS[CRON_JOB[cron] || "report"];
@@ -121,10 +136,14 @@ async function trigger(env, { job = JOBS.report, stage = "final", date = "", for
   if (!token) return { ok: false, status: 500, message: "GITHUB_TOKEN 이 없습니다" };
 
   if (!force) {
-    const { done, want } = await alreadyDone(job);
-    if (done) {
-      return { ok: true, skipped: true, message: `${job.label} ${want} 이 이미 있습니다` };
+    // 확정 갱신은 이미 있어도 다시 만든다. 그게 목적이다.
+    if (!job.ignoreDone) {
+      const { done, want } = await alreadyDone(job);
+      if (done) {
+        return { ok: true, skipped: true, message: `${job.label} ${want} 이 이미 있습니다` };
+      }
     }
+    // 겹쳐 도는 것은 확정 갱신이라도 막는다.
     if (await recentlyRan(token, job)) {
       return { ok: true, skipped: true, message: `${job.label}: 최근 ${MIN_GAP_MIN}분 안에 이미 실행됐습니다` };
     }
@@ -154,8 +173,8 @@ async function trigger(env, { job = JOBS.report, stage = "final", date = "", for
 export default {
   // 크론. Cloudflare 도 UTC 기준이다.
   //   30 7  * * *  = 16:30 KST  수급 리포트 본 실행
-  //   0  9  * * *  = 18:00 KST  수급 리포트 1차 재시도
-  //   0  11 * * *  = 20:00 KST  수급 리포트 2차 재시도
+  //   0  9  * * *  = 18:00 KST  실패했을 때 재시도
+  //   30 11 * * *  = 20:30 KST  확정 갱신 (이미 있어도 덮어쓴다)
   //   30 16 * * *  = 01:30 KST  뉴스 요약 (전날 기사)
   //
   // 요일 조건(1-5)을 일부러 넣지 않는다. 표기가 한 칸 밀리면 금요일을 통째로
