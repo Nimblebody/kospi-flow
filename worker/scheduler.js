@@ -217,6 +217,32 @@ export default {
       return Response.json({ ok: false, message: "key 가 맞지 않습니다" }, { status: 403, headers: head });
     }
 
+    // KIS 가 이 Worker 에서 닿는지 본다. KIS 는 :9443 비표준 포트라, Cloudflare 가
+    // 외부 비표준 포트 요청을 막거나 포트를 떼 버리면 스크리너 중계가 성립하지 않는다.
+    // 인증 없이 부르면 KIS 는 HTTP 500 + EGW00304 JSON 을 준다. 그게 오면 닿은 것이다.
+    if (url.pathname === "/kis-ping") {
+      const started = Date.now();
+      try {
+        const res = await fetch(
+          "https://openapi.koreainvestment.com:9443/uapi/domestic-stock/v1/quotations/inquire-price"
+            + "?FID_COND_MRKT_DIV_CODE=J&FID_INPUT_ISCD=005930",
+          { headers: { "User-Agent": "kospi-flow-scheduler" } },
+        );
+        const text = await res.text();
+        return Response.json({
+          reachable: text.includes("EGW") || text.includes("rt_cd"),
+          status: res.status,
+          ms: Date.now() - started,
+          body: text.slice(0, 200),
+        }, { headers: head });
+      } catch (e) {
+        return Response.json(
+          { reachable: false, ms: Date.now() - started, error: String(e) },
+          { headers: head },
+        );
+      }
+    }
+
     // /?job=news 로 뉴스만 따로 돌릴 수 있다. 기본은 수급 리포트.
     const result = await trigger(env, {
       job: JOBS[url.searchParams.get("job") || "report"] || JOBS.report,
