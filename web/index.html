@@ -1326,7 +1326,10 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     var d = shipData || {};
     var h = '<section class="panel" id="p-ship">';
     var cards = ["morning", "evening"].map(function (k) { return d[k]; }).filter(Boolean)
-      .sort(function (a, b) { return (b.generated_at || "").localeCompare(a.generated_at || ""); });
+      .sort(function (a, b) {
+        // as_of = 분석이 가리키는 시각. 지난 날짜를 다시 만든 분석은 generated_at 이 늦어도 뒤로 간다
+        return (b.as_of || b.generated_at || "").localeCompare(a.as_of || a.generated_at || "");
+      });
 
     if (!cards.length) {
       return h + '<div class="card"><h2>조선</h2><div class="empty">아직 조선 분석이 없습니다.<br>' +

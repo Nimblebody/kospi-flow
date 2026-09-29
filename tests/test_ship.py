@@ -203,6 +203,37 @@ def test_evening_window_is_today():
     assert S._since("evening", now) == datetime(2026, 9, 28, 0, 0, tzinfo=config.KST)
 
 
+def test_quotes_from_flows_uses_official_close_and_makes_no_after_hours():
+    """지난 날짜는 현재가(=지금 값) 대신 그날 공식 종가를 시세로 쓴다.
+
+    그대로 두면 오늘 가격이 그날 종가로 적히고, 오늘 가격과 그날 종가의 차이가
+    가짜 애프터마켓 등락으로 잡힌다.
+    """
+    fl = {"A": _fl(9500, 2.5, 480.0), "B": _fl(0, 0.0, 0.0)}   # B 는 그날 행 없음
+    q = S.quotes_from_flows(fl)
+    assert list(q) == ["A"]
+    assert (q["A"]["price"], q["A"]["chg_pct"], q["A"]["amount_eok"]) == (9500, 2.5, 480.0)
+    rows = S.merge(_uni(), q, fl)
+    assert [r["code"] for r in rows] == ["A"]
+    assert "ah_price" not in rows[0]
+
+
+def test_morning_window_prefers_as_of_over_generated_at():
+    """지난 날짜를 다시 만든 저녁 분석은 generated_at 이 늦다. 기사 창은 as_of 로 잡는다."""
+    now = datetime(2026, 9, 30, 8, 0, tzinfo=config.KST)
+    as_of = datetime(2026, 9, 28, 20, 30, tzinfo=config.KST)
+    ev = {"as_of": as_of.isoformat(), "generated_at": "2026-09-29T14:00:00+09:00"}
+    assert S._since("morning", now, ev) == as_of
+
+
+def test_past_date_only_for_evening():
+    try:
+        S.build("morning", date="20200101")
+    except ValueError:
+        return
+    raise AssertionError("아침은 지난 날짜로 다시 만들 수 없어야 한다")
+
+
 # ------------------------------------------------------------ 스키마
 def test_schemas_close_every_object():
     """구조화 출력은 모든 객체에 additionalProperties: False 를 요구한다."""

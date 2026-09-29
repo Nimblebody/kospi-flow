@@ -176,16 +176,19 @@ def collect(day: str) -> tuple[list[dict], dict]:
 
 
 def gather(
-    since: datetime, *, queries: list[str] | None = None, keep=None
+    since: datetime, *, queries: list[str] | None = None, keep=None,
+    until: datetime | None = None,
 ) -> tuple[list[dict], dict]:
-    """since 부터 지금까지 기사를 모아 같은 사건을 하나로 묶는다.
+    """since 부터 until(기본 지금)까지 기사를 모아 같은 사건을 하나로 묶는다.
 
     뉴스 탭(collect)과 조선 탭이 같이 쓴다. 조선 탭은 검색어와 거름 조건만 바꾼다.
+    until 은 지난 날짜를 다시 만들 때 쓴다. 안 자르면 오늘 기사가 섞인다.
     """
-    now = datetime.now(config.KST)
+    now = until or datetime.now(config.KST)
     rows = _from_feeds(since, keep) + _from_google(
         _window_days(since, now), since, queries, keep
     )
+    rows = [r for r in rows if r["at"] <= now]
 
     # 같은 사건이면 직접링크를 남긴다. 그다음은 이른 기사.
     best: dict[str, dict] = {}

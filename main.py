@@ -184,19 +184,19 @@ def explain_only(date: str | None) -> None:
             print("   (해설 없음 — 판정만)")
 
 
-def run_ship(slot: str) -> None:
+def run_ship(slot: str, date: str | None = None) -> None:
     """조선 테마 분석. 휴장일(주말 포함)에는 건너뛴다 — 장이 안 열린 날 '오늘 장'
-    분석을 쓰면 오해를 부른다."""
+    분석을 쓰면 오해를 부른다. date 를 주면 그날 저녁 분석을 다시 만든다."""
     from src import ship
     from src.kis import KisClient
 
-    today = _default_date()
-    if KisClient().is_holiday(today) is True:
-        log.info("%s 은 휴장일입니다. 조선 분석을 건너뜁니다.", today)
+    day = date or _default_date()
+    if KisClient().is_holiday(day) is True:
+        log.info("%s 은 휴장일입니다. 조선 분석을 건너뜁니다.", day)
         sys.exit(0)
 
     cur = ship.load(config.DATA_DIR / "ship.json")
-    report = ship.build(slot, last_evening=cur.get("evening"))
+    report = ship.build(slot, last_evening=cur.get("evening"), date=date)
     if not report:
         log.error("조선 분석(%s)을 만들지 못했습니다.", slot)
         sys.exit(1)
@@ -418,7 +418,7 @@ def main() -> None:
         return
 
     if args.ship:
-        run_ship(args.ship)
+        run_ship(args.ship, args.date)
         return
 
     if args.news:

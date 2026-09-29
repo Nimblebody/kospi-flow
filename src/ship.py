@@ -398,18 +398,42 @@ def _since(slot: str, now: datetime, last_evening: dict | None = None) -> dateti
     if slot == "evening":
         return now.replace(hour=0, minute=0, second=0, microsecond=0)
     fallback = (now - timedelta(days=1)).replace(hour=20, minute=0, second=0, microsecond=0)
+    ev = last_evening or {}
     try:
-        last = datetime.fromisoformat((last_evening or {})["generated_at"])
+        last = datetime.fromisoformat(ev.get("as_of") or ev["generated_at"])
     except (KeyError, TypeError, ValueError):
         return fallback
     return last if now - last <= timedelta(days=4) else fallback
 
 
-def build(slot: str, last_evening: dict | None = None) -> dict | None:
+def quotes_from_flows(fl: dict[str, dict]) -> dict[str, dict]:
+    """지난 날짜용 시세. 현재가 API 는 '지금' 값만 주므로 그날 공식 종가로 대신한다.
+
+    시세와 종가가 같은 값이라 merge() 가 애프터마켓 움직임을 만들지 않는다.
+    그날 수급 행이 없는 종목(거래정지 등)은 빠진다.
+    """
+    return {
+        code: {
+            "price": f["close"], "chg_pct": f["close_chg_pct"],
+            "amount_eok": f["close_amount_eok"], "volume": f["close_volume"],
+            "mcap_eok": 0.0,
+        }
+        for code, f in fl.items() if f.get("close", 0) > 0
+    }
+
+
+def build(slot: str, last_evening: dict | None = None, date: str | None = None) -> dict | None:
+    """date(YYYYMMDD)를 주면 그날로 다시 만든다. 저녁만 된다(아침은 '밤사이' 가 기준이라)."""
     if slot not in ("morning", "evening"):
         raise ValueError(slot)
 
-    now = datetime.now(config.KST)
+    real_now = datetime.now(config.KST)
+    past = bool(date) and date != real_now.strftime("%Y%m%d")
+    if past and slot != "evening":
+        raise ValueError("지난 날짜는 저녁 분석만 다시 만들 수 있다")
+    # 지난 날짜는 그날 20:30 에 돌았다고 보고 만든다. 기사도 그 시각까지만 본다.
+    now = (datetime.strptime(date, "%Y%m%d").replace(hour=20, minute=30, tzinfo=config.KST)
+           if past else real_now)
     day = now.strftime("%Y-%m-%d")
     ymd = now.strftime("%Y%m%d")
 
@@ -418,8 +442,8 @@ def build(slot: str, last_evening: dict | None = None) -> dict | None:
     codes = [s["code"] for s in uni]
 
     kis = KisClient()
-    q = quotes(kis, codes)
     fl = flows(kis, codes, ymd) if slot == "evening" else {}
+    q = quotes_from_flows(fl) if past else quotes(kis, codes)
     stocks = merge(uni, q, fl)
     ah = sum(1 for x in stocks if "ah_price" in x)
     log.info("시세 %d · 수급 %d · 애프터마켓이 움직인 종목 %d", len(q), len(fl), ah)
@@ -429,7 +453,8 @@ def build(slot: str, last_evening: dict | None = None) -> dict | None:
     groups = group_summary(stocks)
 
     articles, window = news.gather(
-        _since(slot, now, last_evening), queries=QUERIES, keep=keep
+        _since(slot, now, last_evening), queries=QUERIES, keep=keep,
+        until=now if past else None,
     )
     pool = articles[:POOL]
     log.info("조선 기사 %d건 (모델에 %d건)", len(articles), len(pool))
@@ -448,7 +473,10 @@ def build(slot: str, last_evening: dict | None = None) -> dict | None:
     report = {
         "slot": slot,
         "date": day,
-        "generated_at": now.isoformat(timespec="seconds"),
+        # as_of = 이 분석이 가리키는 시각, generated_at = 실제로 만든 시각.
+        # 지난 날짜를 다시 만들면 둘이 다르다. 아침 기사 창은 as_of 를 기준으로 잡는다.
+        "as_of": now.isoformat(timespec="seconds"),
+        "generated_at": real_now.isoformat(timespec="seconds"),
         "window": window,
         "collected": len(articles),
         "pool": len(pool),
