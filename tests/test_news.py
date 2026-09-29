@@ -231,6 +231,109 @@ def test_no_chaining_through_look_alikes():
     assert len(out) == 2
 
 
+
+# ------------------------------------------------------------ 네이버 검색
+class _Resp:
+    def __init__(self, items):
+        self._items = items
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"items": self._items}
+
+
+def _naver_item(title, when, desc="요약", url="https://www.example.co.kr/a/1"):
+    return {"title": title, "description": desc, "pubDate": when,
+            "link": "https://n.news.naver.com/x", "originallink": url}
+
+
+def _with_naver(pages, keys=True):
+    """requests.get 을 가짜로 바꿔 네이버 응답을 차례로 돌려준다. 부른 횟수도 센다."""
+    import config
+
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None, params=None):
+        calls.append(params)
+        return _Resp(pages[len(calls) - 1] if len(calls) <= len(pages) else [])
+
+    orig = N.requests.get, config.NAVER_CLIENT_ID, config.NAVER_CLIENT_SECRET
+    N.requests.get = fake_get
+    config.NAVER_CLIENT_ID, config.NAVER_CLIENT_SECRET = ("id", "secret") if keys else ("", "")
+    return calls, orig
+
+
+def _restore(orig):
+    import config
+    N.requests.get, config.NAVER_CLIENT_ID, config.NAVER_CLIENT_SECRET = orig
+
+
+def test_naver_rows_are_cleaned_and_windowed():
+    from datetime import datetime
+    import config
+
+    since = datetime(2026, 9, 28, 0, 0, tzinfo=config.KST)
+    until = datetime(2026, 9, 28, 20, 30, tzinfo=config.KST)
+    page = [
+        _naver_item("<b>한화오션</b>, LNG선 2척 수주 &quot;6800억&quot;", "Mon, 28 Sep 2026 21:00:00 +0900"),
+        _naver_item("<b>한화오션</b>, LNG선 2척 수주", "Mon, 28 Sep 2026 16:36:00 +0900",
+                    desc="한화오션은 <b>LNG</b> 운반선 2척을", url="https://m.biz.chosun.com/a/2"),
+        _naver_item("야구 소식", "Mon, 28 Sep 2026 15:00:00 +0900"),
+        _naver_item("<b>한화오션</b> 지난주", "Sun, 27 Sep 2026 23:00:00 +0900"),
+    ]
+    calls, orig = _with_naver([page])
+    try:
+        rows = N._from_naver(since, until, ["한화오션"], keep=lambda t: "한화오션" in t)
+    finally:
+        _restore(orig)
+    assert [r["title"] for r in rows] == ["한화오션, LNG선 2척 수주"]   # 창 밖·거름 탈락
+    r = rows[0]
+    assert r["desc"] == "한화오션은 LNG 운반선 2척을"
+    assert r["source"] == "biz.chosun.com" and r["url"] == "https://m.biz.chosun.com/a/2"
+    assert r["direct"] is True
+    assert len(calls) == 1          # 옛 기사가 나오면 다음 쪽을 안 부른다
+
+
+def test_naver_pages_until_it_reaches_since():
+    from datetime import datetime
+    import config
+
+    since = datetime(2026, 9, 28, 0, 0, tzinfo=config.KST)
+    until = datetime(2026, 9, 28, 20, 30, tzinfo=config.KST)
+    p1 = [_naver_item("조선 A", "Mon, 28 Sep 2026 18:00:00 +0900")]
+    p2 = [_naver_item("조선 B", "Mon, 28 Sep 2026 09:00:00 +0900"),
+          _naver_item("조선 C", "Sun, 27 Sep 2026 22:00:00 +0900")]
+    calls, orig = _with_naver([p1, p2])
+    try:
+        rows = N._from_naver(since, until, ["조선"], keep=lambda t: True)
+    finally:
+        _restore(orig)
+    assert [r["title"] for r in rows] == ["조선 A", "조선 B"]
+    assert [c["start"] for c in calls] == [1, 101]
+
+
+def test_naver_without_keys_falls_back_to_feeds_and_google():
+    """시크릿이 빠져도 조선 탭이 죽지 않는다. 예전 방식으로 모은다."""
+    from datetime import datetime
+    import config
+
+    since = datetime(2026, 9, 28, 0, 0, tzinfo=config.KST)
+    calls, orig = _with_naver([], keys=False)
+    feeds = N._from_feeds, N._from_google
+    N._from_feeds = lambda since, keep=None: [{
+        "title": "피드 기사", "source": "매체", "time": "", "at": since.replace(hour=9),
+        "url": "https://example.com/f", "direct": True}]
+    N._from_google = lambda days, since, queries=None, keep=None: []
+    try:
+        out, _ = N.gather(since, until=since.replace(hour=20), naver=True)
+    finally:
+        N._from_feeds, N._from_google = feeds
+        _restore(orig)
+    assert calls == [] and [r["title"] for r in out] == ["피드 기사"]
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

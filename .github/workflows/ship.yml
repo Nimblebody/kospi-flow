@@ -49,6 +49,8 @@ jobs:
           KIS_APP_KEY: ${{ secrets.KIS_APP_KEY }}
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: |
           missing=0
           for name in KIS_APP_KEY KIS_APP_SECRET ANTHROPIC_API_KEY; do
@@ -61,6 +63,12 @@ jobs:
             fi
           done
           [ "$missing" = "0" ] || exit 1
+          # 네이버 키는 없어도 돈다(언론사 RSS + 구글 뉴스로 기사를 모은다).
+          if [ -z "$NAVER_CLIENT_ID" ] || [ -z "$NAVER_CLIENT_SECRET" ]; then
+            echo "::warning::NAVER_CLIENT_ID/SECRET 이 없어 구글 뉴스로 기사를 모읍니다."
+          else
+            echo "NAVER 키 : 설정됨"
+          fi
 
       - name: 조선 분석
         env:
@@ -68,6 +76,8 @@ jobs:
           KIS_APP_SECRET: ${{ secrets.KIS_APP_SECRET }}
           KIS_ENV: ${{ vars.KIS_ENV || 'prod' }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
         run: python main.py --ship "${{ inputs.slot }}"
 
       - name: 결과 커밋

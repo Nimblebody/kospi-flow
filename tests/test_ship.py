@@ -175,6 +175,20 @@ def test_evening_prompt_says_after_close_news_is_not_todays_reason():
     assert "15:30 이후에 처음 나온" in p and "다음 거래일" in p
 
 
+def test_listing_adds_summary_line_when_present():
+    arts = [{"time": "09-28 16:36", "source": "A", "title": "수주", "desc": "LNG선 2척을 수주했다"},
+            {"time": "09-28 17:00", "source": "B", "title": "피드 기사"}]
+    assert S._listing(arts).splitlines() == [
+        "1. [09-28 16:36] (A) 수주", "   요약: LNG선 2척을 수주했다", "2. [09-28 17:00] (B) 피드 기사"]
+
+
+def test_saved_sources_do_not_keep_summaries():
+    """요약문은 모델에만 보여 주고 공개 저장소(ship.json)에는 남기지 않는다."""
+    pool = [{"title": "수주", "url": "u", "desc": "기사 글"}]
+    out = S.map_sources(pool, [{"index": 1, "why": "근거"}])
+    assert out == [{"title": "수주", "url": "u", "why": "근거"}]
+
+
 # ------------------------------------------------------------ 근거 기사
 POOL = [{"title": f"기사{i}", "url": f"https://x/{i}"} for i in range(1, 11)]
 

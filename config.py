@@ -74,6 +74,12 @@ SKIP_MASTER_DOWNLOAD = os.getenv("SKIP_MASTER_DOWNLOAD", "0") == "1"
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "").strip()
 
 
+# ---------------------------------------------------------------- 네이버 검색
+# 조선 탭 기사 수집용(NAVER API HUB). 없으면 언론사 RSS + 구글 뉴스로 모은다.
+NAVER_CLIENT_ID = os.getenv("NAVER_CLIENT_ID", "").strip()
+NAVER_CLIENT_SECRET = os.getenv("NAVER_CLIENT_SECRET", "").strip()
+
+
 # ---------------------------------------------------------------- 텔레그램
 # 붙여넣을 때 딸려 오는 공백·줄바꿈·따옴표를 털어낸다. 이게 섞이면 토큰이 통째로
 # 무효가 되는데, 텔레그램은 404 만 돌려줘서 원인을 알아보기 어렵다.

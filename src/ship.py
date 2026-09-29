@@ -296,17 +296,23 @@ def _table(stocks: list[dict], groups: list[dict]) -> str:
 
 
 def _listing(articles: list[dict]) -> str:
-    """기사 한 줄씩. 여러 매체가 다룬 소식은 묶인 수를 붙인다 — 무게를 가늠하는 단서다."""
-    return "\n".join(
-        f"{i}. [{a['time']}] ({a['source']}) {a['title']}"
-        + (f" (같은 소식 {a['dup']}건)" if a.get("dup", 1) > 1 else "")
-        for i, a in enumerate(articles, 1)
-    )
+    """기사 한 줄씩. 여러 매체가 다룬 소식은 묶인 수를 붙인다 — 무게를 가늠하는 단서다.
+
+    네이버에서 온 기사는 앞부분 요약(desc)을 한 줄 더 붙인다. 본문 전부는 넣지 않는다.
+    9/23·9/28 비교에서 본문은 비용이 3배인데 정확도·전망은 요약과 차이가 없었다.
+    """
+    lines = []
+    for i, a in enumerate(articles, 1):
+        lines.append(f"{i}. [{a['time']}] ({a['source']}) {a['title']}"
+                     + (f" (같은 소식 {a['dup']}건)" if a.get("dup", 1) > 1 else ""))
+        if a.get("desc"):
+            lines.append(f"   요약: {a['desc']}")
+    return "\n".join(lines)
 
 
 _RULES = """지켜야 할 것.
-- 기사는 제목만 있다. 제목이 말하는 범위를 넘는 사실을 지어내지 않는다.
-- 숫자는 표나 기사 제목에 있는 것만 쓴다. 증권사 목표가처럼 제목에 적힌 숫자는 인용해도 되지만,
+- 기사는 제목과 앞부분 요약(없는 기사도 있다)만 있다. 거기 적힌 범위를 넘는 사실을 지어내지 않는다.
+- 숫자는 표나 기사(제목·요약)에 있는 것만 쓴다. 증권사 목표가처럼 기사에 적힌 숫자는 인용해도 되지만,
   어디에도 없는 숫자를 만들지 않는다.
 - 안전 캠페인·봉사·협약식 같은 회사 홍보성 기사는 근거로 고르지 않는다.
 - 같은 사건을 다룬 기사는 매체가 달라도 하나만 고른다.
@@ -338,7 +344,7 @@ def _evening_prompt(day, stocks, groups, articles) -> str:
 [종목 표]
 {_table(stocks, groups)}
 
-[오늘 기사 제목 {len(articles)}건]
+[오늘 기사 {len(articles)}건 — 제목과 앞부분 요약]
 {_listing(articles)}
 
 할 일.
@@ -347,7 +353,7 @@ def _evening_prompt(day, stocks, groups, articles) -> str:
    온도차가 있으면 짚는다. {flow_task}
 3) call — 다음 거래일 조선 묶음의 방향.
    direction 은 상승/하락/보합 중 하나, confidence 는 높음/보통/낮음, reason 은 한두 문장.
-   제목만 보고 내리는 판단이라 대개 '보통' 이나 '낮음' 이 맞다. '높음' 은 근거가 겹칠 때만.
+   기사 일부만 보고 내리는 판단이라 대개 '보통' 이나 '낮음' 이 맞다. '높음' 은 근거가 겹칠 때만.
 4) scenarios — 2~3개. '이러면(if) → 이렇게 된다(then)'.
 5) watch — 다음 거래일에 볼 변수 3~5개. 짧게.
 
@@ -373,7 +379,7 @@ def _morning_prompt(day, stocks, groups, articles, last_evening) -> str:
 [종목 표 — 전일 종가]
 {_table(stocks, groups)}
 
-[밤사이 기사 제목 {len(articles)}건]
+[밤사이 기사 {len(articles)}건 — 제목과 앞부분 요약]
 {_listing(articles)}
 
 할 일.
@@ -386,14 +392,18 @@ def _morning_prompt(day, stocks, groups, articles, last_evening) -> str:
 
 
 def map_sources(pool: list[dict], used: list[dict]) -> list[dict]:
-    """모델이 고른 번호를 실제 기사로. 범위 밖·중복·정수 아닌 번호는 버린다."""
+    """모델이 고른 번호를 실제 기사로. 범위 밖·중복·정수 아닌 번호는 버린다.
+
+    요약문(desc)은 저장하지 않는다. 기사 글을 공개 저장소에 옮겨 싣지 않기 위해서다.
+    """
     out, seen = [], set()
     for item in used or []:
         i = item.get("index")
         if not isinstance(i, int) or isinstance(i, bool) or not (1 <= i <= len(pool)) or i in seen:
             continue
         seen.add(i)
-        out.append({**pool[i - 1], "why": (item.get("why") or "").strip()})
+        art = {k: v for k, v in pool[i - 1].items() if k != "desc"}
+        out.append({**art, "why": (item.get("why") or "").strip()})
     return out[:SOURCES_N]
 
 
@@ -463,7 +473,7 @@ def build(slot: str, last_evening: dict | None = None, date: str | None = None) 
 
     articles, window = news.gather(
         _since(slot, now, last_evening), queries=QUERIES, keep=keep,
-        until=now if past else None,
+        until=now if past else None, naver=True,
     )
     pool = articles[:POOL]
     log.info("조선 기사 %d건 (모델에 %d건)", len(articles), len(pool))

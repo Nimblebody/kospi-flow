@@ -11,6 +11,8 @@
      base64 디코딩·본문 추출 모두 실패했다).
 
 종합 피드에는 스포츠·연예가 섞여 들어와서 제목 키워드로 거른다.
+
+조선 탭은 네이버 검색(API HUB)을 쓴다. 원문 링크와 앞부분 요약이 같이 온다.
 """
 from __future__ import annotations
 
@@ -181,6 +183,63 @@ def _from_google(
     return out
 
 
+# 2026-06 에 개발자센터(openapi.naver.com)에서 NAVER API HUB 로 옮겨졌다.
+# 예전 주소·헤더(X-Naver-Client-*)로 부르면 401(errorCode 024)이다.
+NAVER_URL = "https://naverapihub.apigw.ntruss.com/search/v1/news"
+
+
+def _untag(s: str) -> str:
+    """네이버가 검색어에 씌우는 <b> 를 떼고 엔티티를 푼다. <b> 자리에 공백을 넣으면
+    '한화오션 ,' 처럼 쉼표 앞에 빈칸이 생긴다."""
+    s = re.sub(r"</?b>", "", s)
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", s))).strip()
+
+
+def _from_naver(
+    since: datetime, until: datetime, queries: list[str], keep=None
+) -> list[dict] | None:
+    """네이버 뉴스 검색. 원문 링크와 앞부분 요약(description)이 같이 온다.
+
+    최신순으로 100건씩 넘기다 since 보다 옛 기사가 나오면 멈춘다(start 는 1000 까지).
+    키가 없거나 한 번이라도 실패하면 None — 부르는 쪽이 RSS·구글로 돌아간다.
+    매체 이름은 안 주므로 원문 주소의 도메인을 쓴다.
+    """
+    if not (config.NAVER_CLIENT_ID and config.NAVER_CLIENT_SECRET):
+        return None
+    keep = keep or _is_stock
+    headers = {"X-NCP-APIGW-API-KEY-ID": config.NAVER_CLIENT_ID,
+               "X-NCP-APIGW-API-KEY": config.NAVER_CLIENT_SECRET}
+    out: list[dict] = []
+    try:
+        for q in queries:
+            for start in range(1, 1000, 100):
+                r = requests.get(NAVER_URL, headers=headers, timeout=15, params={
+                    "query": q, "display": 100, "start": start, "sort": "date"})
+                r.raise_for_status()
+                items = r.json().get("items") or []
+                for it in items:
+                    at = parsedate_to_datetime(it["pubDate"]).astimezone(config.KST)
+                    title = _clean(_untag(it["title"]))
+                    if not (since <= at <= until) or not keep(title):
+                        continue
+                    url = it.get("originallink") or it["link"]
+                    out.append({
+                        "title": title,
+                        "source": re.sub(r"^(www|m)\.", "", re.sub(r"^https?://([^/]+).*", r"\1", url)),
+                        "time": at.strftime("%m-%d %H:%M"),
+                        "at": at,
+                        "url": url,
+                        "direct": True,
+                        "desc": _untag(it.get("description") or ""),
+                    })
+                if not items or parsedate_to_datetime(items[-1]["pubDate"]) < since:
+                    break
+    except Exception as exc:
+        log.warning("네이버 검색 실패, RSS·구글로 모읍니다: %s", exc)
+        return None
+    return out
+
+
 def collect(day: str) -> tuple[list[dict], dict]:
     """day 00:00(KST)부터 지금까지의 기사를 모은다. 직접링크를 앞에 둔다.
 
@@ -196,17 +255,20 @@ def collect(day: str) -> tuple[list[dict], dict]:
 
 def gather(
     since: datetime, *, queries: list[str] | None = None, keep=None,
-    until: datetime | None = None,
+    until: datetime | None = None, naver: bool = False,
 ) -> tuple[list[dict], dict]:
     """since 부터 until(기본 지금)까지 기사를 모아 같은 사건을 하나로 묶는다.
 
     뉴스 탭(collect)과 조선 탭이 같이 쓴다. 조선 탭은 검색어와 거름 조건만 바꾼다.
     until 은 지난 날짜를 다시 만들 때 쓴다. 안 자르면 오늘 기사가 섞인다.
+    naver=True 면 네이버 검색으로 모은다(조선 탭). 못 쓰면 RSS·구글로 돌아간다.
     """
     now = until or datetime.now(config.KST)
-    rows = _from_feeds(since, keep) + _from_google(
-        _window_days(since, now), since, queries, keep
-    )
+    rows = _from_naver(since, now, queries or GOOGLE_QUERIES, keep) if naver else None
+    if rows is None:
+        rows = _from_feeds(since, keep) + _from_google(
+            _window_days(since, now), since, queries, keep
+        )
     rows = [r for r in rows if r["at"] <= now]
 
     # 같은 소식이면 직접링크를 남긴다. 그다음은 이른 기사. dup = 묶인 기사 수.
