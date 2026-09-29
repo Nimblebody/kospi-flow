@@ -249,7 +249,9 @@ header {
 .badge.final { color: var(--up); border-color: color-mix(in srgb, var(--up) 40%, var(--line)); background: var(--up-soft); }
 
 /* 한국 / 미국. 탭 줄 위에서 시장을 통째로 가른다. */
-.markets { max-width: 520px; margin: 0 auto; padding: 0 14px 7px; display: flex; gap: 5px; }
+.markets { max-width: 520px; margin: 0 auto; padding: 0 14px 7px; display: flex; gap: 5px;
+  overflow-x: auto; scrollbar-width: none; }
+.markets button { flex-shrink: 0; }
 .markets button {
   font: inherit; font-size: calc(12.5px * var(--fs)); font-weight: 600;
   color: var(--ink-3); background: var(--surface-2);
@@ -357,6 +359,19 @@ ul.headline { margin: 0; padding: 0; }
 .members td:first-child { text-align: left; color: var(--ink); }
 .members .sc { color: var(--ink-3); font-size: calc(10.5px * var(--fs)); margin-left: 4px; }
 /* ── 뉴스 ─────────────────────────────────────────── */
+/* ── 조선 ─────────────────────────────────────────── */
+.scall { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; padding: 8px 10px;
+  border-radius: 8px; background: var(--surface-2); border: 1px solid var(--line-soft); }
+.scall .dir { font-size: calc(15px * var(--fs)); font-weight: 700; }
+.scall .dir.up { color: var(--up); } .scall .dir.down { color: var(--down); }
+.scall .dir.flat { color: var(--ink-2); }
+.scall .conf { font-size: calc(11px * var(--fs)); color: var(--ink-3); }
+.sreason { margin: 0 0 10px; font-size: calc(12.5px * var(--fs)); color: var(--ink-2); line-height: 1.6; }
+.slabel { margin: 12px 0 4px; font-size: calc(11px * var(--fs)); font-weight: 600; color: var(--ink-3); }
+.sscen { margin: 0; padding-left: 17px; }
+.sscen li { margin: 4px 0; line-height: 1.55; }
+.sscen .if { color: var(--ink-2); }
+.swatch { display: flex; flex-wrap: wrap; gap: 5px; }
 .nlead { margin: 0 0 9px; font-size: 15px; font-weight: 600; line-height: 1.45; letter-spacing: -.01em; }
 .npoints { margin: 0; padding-left: 17px; }
 .npoints li { margin: 5px 0; line-height: 1.6; }
@@ -469,6 +484,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     <button role="tab" aria-selected="true" data-market="kr">한국</button>
     <button role="tab" aria-selected="false" data-market="us">미국</button>
     <button role="tab" aria-selected="false" data-market="news">뉴스</button>
+    <button role="tab" aria-selected="false" data-market="ship">조선</button>
     <button role="tab" aria-selected="false" data-market="check">체크리스트</button>
   </div>
   <nav class="tabs" id="tabs" role="tablist">
@@ -570,7 +586,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     main.innerHTML =
       panelSummary(d) + panelTheme(d) + panelMove(d) + panelStock(d) + panelSector(d) +
       panelUsSummary(d) + panelUsStock(d) + panelUsSector(d) +
-      panelNews() + panelCheck(d) +
+      panelNews() + panelShip() + panelCheck(d) +
       '<footer>테마 분류: ' + esc(d.theme_source || "—") + '<br>' +
       '수집 ' + esc((d.collected_at || "").replace("T", " ").slice(0, 16)) + ' · ' +
       '투자 판단의 근거로 쓰기 전에 원 데이터를 확인하세요.</footer>';
@@ -1216,6 +1232,113 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
       chart + '</div>';
   }
 
+  /* ── 조선 ─────────────────────────────────────────
+     아침(08:00)·저녁(20:30) 분석을 최신 것부터 보여 준다. 종목 표는 수급이 붙는
+     저녁 분석 기준이다(아침엔 확정 수급 API 가 15:40 까지 잠겨 있다). */
+  var shipData = null;
+
+  function shipSources(list) {
+    if (!(list || []).length) return "";
+    return '<p class="slabel">근거 기사</p><div class="nlist">' + list.map(function (t) {
+      var via = t.direct ? "" : '<span class="via">구글 뉴스 경유</span>';
+      return '<a class="nitem" href="' + esc(t.url) + '" target="_blank" rel="noopener noreferrer">' +
+        '<span class="nt">' + esc(t.title) + '</span>' +
+        (t.why ? '<span class="nw">' + esc(t.why) + '</span>' : "") +
+        '<span class="nm">' + esc(t.source) + ' · ' + esc(t.time) + via + '</span></a>';
+    }).join("") + '</div>';
+  }
+
+  function shipCard(r) {
+    var evening = r.slot === "evening";
+    var h = '<div class="card"><h2>' + esc(r.date) + (evening ? ' 저녁 · 애프터마켓 뒤' : ' 아침 · 장 시작 전') + '</h2>';
+    h += '<p class="sub">기사 ' + (r.collected || 0) + '건 중 ' + (r.pool || 0) + '건을 읽었습니다.' +
+         (evening && !r.has_after_hours ? ' 애프터마켓 시세는 받지 못했습니다.' : '') + '</p>';
+
+    if (evening && r.call && r.call.direction) {
+      var d = r.call.direction;
+      var cl = d === "상승" ? "up" : d === "하락" ? "down" : "flat";
+      var mark = d === "상승" ? "▲ " : d === "하락" ? "▼ " : "― ";
+      h += '<div class="scall"><span class="dir ' + cl + '">' + mark + esc(d) + '</span>' +
+           '<span class="conf">다음 거래일 · 확신도 ' + esc(r.call.confidence || "—") + '</span></div>';
+      if (r.call.reason) h += '<p class="sreason">' + esc(r.call.reason) + '</p>';
+    }
+
+    if (r.headline) h += '<p class="nlead">' + esc(r.headline) + '</p>';
+    if ((r.points || []).length) {
+      h += '<ul class="npoints">' + r.points.map(function (x) {
+        return "<li>" + esc(x) + "</li>";
+      }).join("") + '</ul>';
+    }
+
+    if (!evening && r.revise) h += '<p class="slabel">어제 저녁 전망과 비교</p><p class="sreason">' + esc(r.revise) + '</p>';
+
+    if (evening && (r.scenarios || []).length) {
+      h += '<p class="slabel">시나리오</p><ul class="sscen">' + r.scenarios.map(function (x) {
+        return '<li><span class="if">' + esc(x["if"]) + '</span> → ' + esc(x.then) + '</li>';
+      }).join("") + '</ul>';
+    }
+
+    if ((r.watch || []).length) {
+      h += '<p class="slabel">' + (evening ? '다음 거래일에 볼 것' : '오늘 볼 것') + '</p><div class="swatch">' +
+           r.watch.map(function (x) { return '<span class="chip">' + esc(x) + '</span>'; }).join("") + '</div>';
+    }
+
+    return h + shipSources(r.sources) + '</div>';
+  }
+
+  function shipTable(r) {
+    var groups = r.groups || [], stocks = r.stocks || [];
+    if (!groups.length) return "";
+    var flows = !!r.has_flows, ah = !!r.has_after_hours;
+    var max = Math.max.apply(null, groups.map(function (g) { return Math.abs(g.avg_chg_pct); }).concat([0.5]));
+
+    var h = '<div class="card"><h2>종목 · ' + esc(r.date) + (r.slot === "evening" ? ' 종가' : ' 전일 종가') + '</h2>' +
+            '<p class="sub">묶음을 누르면 종목이 열립니다.' + (flows ? ' 수급은 외국인·기관 당일 순매수입니다.' : '') + '</p><div class="list">';
+    groups.forEach(function (g) {
+      var rows = stocks.filter(function (s) { return s.group === g.name; });
+      var meta = '<span class="num">상승 ' + g.up + ' · 하락 ' + g.down + '</span>' +
+                 '<span>·</span><span class="num">거래대금 ' + eok(g.amount_eok).replace("+", "") + '</span>';
+      if (flows) meta += '<span>·</span><span class="num ' + cls(g.frgn_eok) + '">외 ' + eok(g.frgn_eok) + '</span>' +
+                         '<span class="num ' + cls(g.orgn_eok) + '">기 ' + eok(g.orgn_eok) + '</span>';
+      if (ah && g.ah_avg_chg_pct != null) meta += '<span>·</span><span class="num ' + cls(g.ah_avg_chg_pct) + '">애프터 ' + pct(g.ah_avg_chg_pct) + '</span>';
+
+      var body = '<tr><th>종목</th><th>등락</th><th>거래대금</th>' + (flows ? '<th>외국인</th><th>기관</th>' : '') +
+                 (ah ? '<th>애프터</th>' : '') + '</tr>' + rows.map(function (s) {
+        return '<tr><td>' + esc(s.name) + '</td>' +
+          '<td class="num ' + cls(s.chg_pct) + '">' + pct(s.chg_pct) + '</td>' +
+          '<td class="num">' + eok(s.amount_eok).replace("+", "") + '</td>' +
+          (flows ? '<td class="num ' + cls(s.frgn_eok) + '">' + eok(s.frgn_eok) + '</td>' +
+                   '<td class="num ' + cls(s.orgn_eok) + '">' + eok(s.orgn_eok) + '</td>' : '') +
+          (ah ? '<td class="num ' + cls(s.ah_chg_pct) + '">' + (s.ah_chg_pct == null ? "—" : pct(s.ah_chg_pct)) + '</td>' : '') +
+          '</tr>';
+      }).join("");
+
+      h += '<div class="trow" data-open="0"><button type="button" aria-expanded="false">' +
+        '<span class="l1"><span class="caret">▸</span><span class="tname">' + esc(g.name) + ' ' + g.count + '종목</span>' +
+        '<span class="amt num ' + cls(g.avg_chg_pct) + '">평균 ' + pct(g.avg_chg_pct) + '</span></span>' +
+        magBar(g.avg_chg_pct, max) + '<span class="meta">' + meta + '</span></button>' +
+        '<div class="members"><table>' + body + '</table></div></div>';
+    });
+    return h + '</div></div>';
+  }
+
+  function panelShip() {
+    var d = shipData || {};
+    var h = '<section class="panel" id="p-ship">';
+    var cards = ["morning", "evening"].map(function (k) { return d[k]; }).filter(Boolean)
+      .sort(function (a, b) { return (b.generated_at || "").localeCompare(a.generated_at || ""); });
+
+    if (!cards.length) {
+      return h + '<div class="card"><h2>조선</h2><div class="empty">아직 조선 분석이 없습니다.<br>' +
+        '평일 아침 8시와 저녁 8시 반에 정리합니다.</div></div></section>';
+    }
+    cards.forEach(function (r) { h += shipCard(r); });
+    h += shipTable(d.evening || cards[0]);
+    h += '<div class="card"><p class="sub">AI 가 기사 제목과 시세·수급 숫자만 보고 쓴 분석과 전망입니다. ' +
+         '기사 본문은 읽지 않았고 틀릴 수 있습니다. 투자 판단의 근거로 쓰기 전에 원 기사와 데이터를 확인하세요.</p></div>';
+    return h + "</section>";
+  }
+
   /* ── 뉴스 ─────────────────────────────────────────
      수급 리포트와 다른 시각(01:30 KST)에 따로 만들어져서 데이터도 따로 받는다.
      아직 없으면 안내만 띄우고 나머지 화면은 그대로 돈다. */
@@ -1302,7 +1425,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
      갈리고, 각 시장에서 마지막에 보던 화면으로 돌아온다. 리포트를 다시 그려도
      (날짜 변경·새로고침) 보던 자리를 지키려고 render() 끝에서 다시 맞춘다. */
   var market = "kr";
-  var lastPanel = { kr: "p-sum", us: "p-us-sum", news: "p-news", check: "p-check" };
+  var lastPanel = { kr: "p-sum", us: "p-us-sum", news: "p-news", ship: "p-ship", check: "p-check" };
 
   try {
     var savedMarket = localStorage.getItem("market");
@@ -1445,6 +1568,13 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
   /* ── 날짜 선택 ─────────────────────────────────────
      index.json 의 dates 를 채워 넣고, 고르면 그날 리포트를 불러 다시 그린다.
      인라인 단일 HTML(build_standalone)에는 옆에 데이터 파일이 없으므로 띄우지 않는다. */
+  function loadShip() {
+    return fetch("data/ship.json?t=" + Date.now())
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (n) { shipData = n; })
+      .catch(function () { shipData = null; });
+  }
+
   function loadNews() {
     // 리포트와 다른 시각에 만들어져서 따로 받는다. 없거나 실패해도 그냥 넘어간다.
     return fetch("data/news-latest.json?t=" + Date.now())
@@ -1500,7 +1630,7 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
       .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
       .then(function (d) {
         // 뉴스를 먼저 받아 두고 한 번에 그린다. 없으면 안내만 뜬다.
-        return loadNews().then(function () {
+        return Promise.all([loadNews(), loadShip()]).then(function () {
           render(d);
           setupDatePicker(d.date);
           document.getElementById("refresh").hidden = false;
