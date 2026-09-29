@@ -184,6 +184,31 @@ def explain_only(date: str | None) -> None:
             print("   (해설 없음 — 판정만)")
 
 
+def run_ship(slot: str) -> None:
+    """조선 테마 분석. 휴장일(주말 포함)에는 건너뛴다 — 장이 안 열린 날 '오늘 장'
+    분석을 쓰면 오해를 부른다."""
+    from src import ship
+    from src.kis import KisClient
+
+    today = _default_date()
+    if KisClient().is_holiday(today) is True:
+        log.info("%s 은 휴장일입니다. 조선 분석을 건너뜁니다.", today)
+        sys.exit(0)
+
+    cur = ship.load(config.DATA_DIR / "ship.json")
+    report = ship.build(slot, last_evening=cur.get("evening"))
+    if not report:
+        log.error("조선 분석(%s)을 만들지 못했습니다.", slot)
+        sys.exit(1)
+
+    store.save_ship(report)
+    render.build_site()
+    log.info("  %s", report["headline"])
+    if slot == "evening":
+        c = report.get("call") or {}
+        log.info("  전망 %s (확신도 %s)", c.get("direction"), c.get("confidence"))
+
+
 def run_news(day: str) -> None:
     """증시 뉴스를 모아 요약하고 저장한다.
 
@@ -351,6 +376,11 @@ def main() -> None:
         help="미국 시세 후보 심볼을 전부 넣어 보고 되는 것을 표로 찍는다",
     )
     p.add_argument(
+        "--ship",
+        choices=["morning", "evening"],
+        help="조선 테마 분석. morning=08:00 장 전, evening=20:30 애프터마켓 뒤",
+    )
+    p.add_argument(
         "--news",
         action="store_true",
         help="증시 뉴스를 모아 요약한다 (기본: 어제 KST). 수급 리포트와 별개로 돈다",
@@ -385,6 +415,10 @@ def main() -> None:
     # 화면만 고친 경우. 데이터는 web/data 에 이미 있으니 API 를 부를 이유가 없다.
     if args.build_only:
         render.build_site()
+        return
+
+    if args.ship:
+        run_ship(args.ship)
         return
 
     if args.news:

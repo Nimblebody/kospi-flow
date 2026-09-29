@@ -131,6 +131,23 @@ def save_news(report: dict) -> Path:
     return path
 
 
+def save_ship(report: dict) -> Path:
+    """조선 탭. 아침·저녁을 한 파일에 둔다 {"morning": …, "evening": …}.
+
+    화면은 둘을 같이 보여 주고, 아침 분석은 전날 저녁 분석을 읽어야 하므로 한데 둔다.
+    지난 분석은 git 기록에 남는다.
+    """
+    path = config.DATA_DIR / "ship.json"
+    try:
+        cur = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        cur = {}
+    cur[report["slot"]] = report
+    path.write_text(_dump(cur), encoding="utf-8")
+    log.info("조선 분석 저장: %s (%s)", path, report["slot"])
+    return path
+
+
 def load_report(date: str) -> dict | None:
     path = report_path(date)
     if not path.exists():
