@@ -482,7 +482,7 @@ def build(slot: str, last_evening: dict | None = None, date: str | None = None) 
               else _morning_prompt(day, stocks, groups, pool, last_evening))
     schema = EVENING_SCHEMA if slot == "evening" else MORNING_SCHEMA
     try:
-        got = _ask(prompt, schema)
+        got = _ask(prompt, schema, effort="low")   # 비교 결과는 explain._ask 참고
     except Exception as exc:
         log.warning("조선 분석 실패: %s", exc)
         return None

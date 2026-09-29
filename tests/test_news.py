@@ -24,8 +24,12 @@ def _rows(n=12):
     ]
 
 
+ASKED: list[dict] = []   # 가짜 _ask 가 받은 옵션(effort 등)
+
+
 def _fake_ask(answer):
-    def go(prompt, schema=None):
+    def go(prompt, schema=None, **kw):
+        ASKED.append(kw)
         return answer
     return go
 
@@ -332,6 +336,14 @@ def test_naver_without_keys_falls_back_to_feeds_and_google():
         N._from_feeds, N._from_google = feeds
         _restore(orig)
     assert calls == [] and [r["title"] for r in out] == ["피드 기사"]
+
+
+
+def test_summary_asks_with_low_effort():
+    """뉴스 요약은 effort low 로 부른다(9/28 비교에서 품질이 같고 32% 쌌다)."""
+    ASKED.clear()
+    run_with({"headline": "한 줄", "points": ["요약."], "top": [{"index": 1, "why": "이유."}]})
+    assert ASKED == [{"effort": "low"}]
 
 
 if __name__ == "__main__":

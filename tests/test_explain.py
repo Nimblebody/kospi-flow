@@ -116,6 +116,38 @@ def test_missing_part_in_the_morning_is_filled_in():
     assert sorted(calls) == [("섹터", "us"), ("해설", "us")]
 
 
+
+# ------------------------------------------------------------ 업종 요약
+def test_leaked_article_numbers_are_dropped():
+    """effort low 에서 '관련 기사 있음[17,38,39]' 가 본문에 새어 나왔다(9/28 비교)."""
+    assert E._drop_refs("SK하이닉스 -5.0% 대규모 매도, 관련 기사 있음[17,38,39].") ==         "SK하이닉스 -5.0% 대규모 매도."
+    assert E._drop_refs("하이브 +3.4% 상승, 관련 기사 있음[33].") == "하이브 +3.4% 상승."
+    assert E._drop_refs("대우건설 +7.0% 기사[5] 주도.") == "대우건설 +7.0% 주도."
+    assert E._drop_refs("화학 +3.2%, 반도체 [장비] 강세.") == "화학 +3.2%, 반도체 [장비] 강세."
+
+
+def test_sectors_ask_with_low_effort_and_clean_lines():
+    asked = []
+    secs = [{"name": f"업종{i}", "chg_pct": 3.0 - i, "stocks": [{"name": f"종목{i}", "chg_pct": 1.0}]}
+            for i in range(5)]
+    report = {"date": "2026-09-28", "sectors": secs, "indices": [], "investors": {}}
+
+    def fake_ask(prompt, schema=None, **kw):
+        asked.append(kw)
+        return {"note": "큰 그림[3].", "rows": [{"name": s["name"], "line": "끌었다, 관련 기사 있음[1,2]."}
+                                             for s in secs]}
+
+    orig = E._ask, E.headlines
+    E._ask, E.headlines = fake_ask, lambda queries, on_date, limit=None: []
+    try:
+        out = E.sectors(report, [], "kr")
+    finally:
+        E._ask, E.headlines = orig
+    assert asked == [{"effort": "low"}]
+    assert out["note"] == "큰 그림."
+    assert all(r["line"] == "끌었다." for r in out["rows"])
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

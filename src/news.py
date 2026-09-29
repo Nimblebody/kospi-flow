@@ -367,7 +367,7 @@ def summarize(day: str, rows: list[dict]) -> dict | None:
 
     log.info("요약 요청: 기사 %d건", len(pool))
     try:
-        got = _ask(_prompt(day, pool), SCHEMA)
+        got = _ask(_prompt(day, pool), SCHEMA, effort="low")   # 비교 결과는 explain._ask 참고
     except Exception as exc:
         log.warning("요약 실패: %s", exc)
         return None

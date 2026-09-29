@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import statistics
 import urllib.parse
 import xml.etree.ElementTree as ET
@@ -247,7 +248,15 @@ SECTOR_RULES = """규칙
 4. note 는 20개 업종 전체를 관통하는 한 줄, 100자 이내. 돈이 어느 쪽으로 옮겨 갔는지
    같은 큰 그림을 쓴다.
 5. 단정하지 마라. 투자 권유는 하지 마라.
-6. 한국어로 쓴다. 종목·업종 이름 외의 영어 낱말은 쓰지 마라."""
+6. 한국어로 쓴다. 종목·업종 이름 외의 영어 낱말은 쓰지 마라.
+7. line 과 note 에 기사 번호([17] · [17,38])를 쓰지 마라. 근거 기사는 화면에 따로 붙는다."""
+
+# 규칙 7 을 어기고 새어 나온 기사 번호. effort low 에서 '관련 기사 있음[17,38,39]' 가 나왔다.
+_REFS = re.compile(r",?\s*(?:관련\s*)?(?:기사\s*(?:있음\s*)?)?\[\d+(?:\s*,\s*\d+)*\]")
+
+
+def _drop_refs(text: str) -> str:
+    return _REFS.sub("", text).strip()
 
 RULES = """규칙
 1. 구간이 '조용' 이면 특별한 이유가 없다는 것이 기본 답이다. 기사가 이유를 붙이더라도
@@ -517,7 +526,7 @@ def sectors(report: dict, news: list[dict], market: str = "kr") -> dict | None:
     hit = match_articles(rows, news)
 
     try:
-        got = _ask(_sector_prompt(report, rows, hit, news, market), SECTOR_SCHEMA)
+        got = _ask(_sector_prompt(report, rows, hit, news, market), SECTOR_SCHEMA, effort="low")
     except Exception as exc:
         log.warning("%s 섹터 요약 실패: %s", market, exc)
         return None
@@ -527,13 +536,13 @@ def sectors(report: dict, news: list[dict], market: str = "kr") -> dict | None:
     line = {r["name"]: r["line"] for r in (got.get("rows") or [])}
     half = len(rows) // 2 if market == "us" else SECTOR_TOP
     out = {
-        "note": got.get("note", ""),
+        "note": _drop_refs(got.get("note", "")),
         "rows": [
             {
                 "name": sec["name"],
                 "chg_pct": sec["chg_pct"],
                 "rank": "top" if i < half else "bottom",
-                "line": line.get(sec["name"], ""),
+                "line": _drop_refs(line.get(sec["name"], "")),
                 "sources": hit.get(sec["name"]) or [],
             }
             for i, sec in enumerate(rows)
@@ -547,16 +556,25 @@ def sectors(report: dict, news: list[dict], market: str = "kr") -> dict | None:
 
 
 # ---------------------------------------------------------------- 실행
-def _ask(prompt: str, schema: dict | None = None) -> dict | None:
+def _ask(prompt: str, schema: dict | None = None, effort: str | None = None) -> dict | None:
+    """effort 를 주면 생각 강도를 정한다(없으면 모델 기본 high).
+
+    9/28 같은 프롬프트로 비교해 보니 조선 저녁·뉴스 요약·업종 요약은 'low' 에서도 품질이
+    거의 같고 30~50% 쌌다. 지수 해설은 low 가 기사와 데이터의 어긋남을 놓쳐 기본을 둔다.
+    Haiku 4.5 는 토큰 수가 같아 싸지도 않았고 조선 헤드라인을 틀렸다(context-notes 9/29).
+    """
     import anthropic
 
     client = anthropic.Anthropic()
+    output_config = {"format": {"type": "json_schema", "schema": schema or SCHEMA}}
+    if effort:
+        output_config["effort"] = effort
     res = client.messages.create(
         model=MODEL,
         max_tokens=8000,
         thinking={"type": "adaptive"},
         messages=[{"role": "user", "content": prompt}],
-        output_config={"format": {"type": "json_schema", "schema": schema or SCHEMA}},
+        output_config=output_config,
     )
     u = res.usage
     log.info(
