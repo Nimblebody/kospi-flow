@@ -79,8 +79,13 @@ def _is_stock(title: str) -> bool:
     return any(h in title for h in STOCK_HINTS)
 
 
-def _from_feeds(since: datetime) -> list[dict]:
-    """국내 언론사 RSS. 링크가 기사 주소 그대로다. since 이후 전부."""
+def _from_feeds(since: datetime, keep=None) -> list[dict]:
+    """국내 언론사 RSS. 링크가 기사 주소 그대로다. since 이후 전부.
+
+    keep 은 제목을 보고 남길지 정하는 함수. 기본은 증시 기사 거름(_is_stock).
+    조선 탭은 조선·해운 기사만 남기도록 다른 함수를 넘긴다.
+    """
+    keep = keep or _is_stock
     out: list[dict] = []
     for source, url in FEEDS:
         try:
@@ -101,7 +106,7 @@ def _from_feeds(since: datetime) -> list[dict]:
                 kst = when.astimezone(config.KST)
             except Exception:
                 continue
-            if kst < since or not _is_stock(title):
+            if kst < since or not keep(title):
                 continue
             out.append({
                 "title": _clean(title),
@@ -127,13 +132,16 @@ def _window_days(since: datetime, now: datetime) -> list[str]:
     return days or [since.strftime("%Y-%m-%d")]
 
 
-def _from_google(days: list[str], since: datetime) -> list[dict]:
+def _from_google(
+    days: list[str], since: datetime, queries: list[str] | None = None, keep=None
+) -> list[dict]:
     """구글 뉴스로 빈자리를 메운다. 링크는 중간 페이지를 거친다."""
+    keep = keep or _is_stock
     out = []
     for day in days:
-        for a in headlines(GOOGLE_QUERIES, day, limit=200):
+        for a in headlines(queries or GOOGLE_QUERIES, day, limit=200):
             title = _clean(a["title"])
-            if not _is_stock(title):
+            if not keep(title):
                 continue
             try:
                 at = datetime.strptime(f"{day} {a['time']}", "%Y-%m-%d %H:%M").replace(
@@ -164,8 +172,20 @@ def collect(day: str) -> tuple[list[dict], dict]:
     어제 날짜를 써 놓고 목록은 오늘 기사만 늘어서는 일이 있었다.
     """
     since = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=config.KST)
+    return gather(since)
+
+
+def gather(
+    since: datetime, *, queries: list[str] | None = None, keep=None
+) -> tuple[list[dict], dict]:
+    """since 부터 지금까지 기사를 모아 같은 사건을 하나로 묶는다.
+
+    뉴스 탭(collect)과 조선 탭이 같이 쓴다. 조선 탭은 검색어와 거름 조건만 바꾼다.
+    """
     now = datetime.now(config.KST)
-    rows = _from_feeds(since) + _from_google(_window_days(since, now), since)
+    rows = _from_feeds(since, keep) + _from_google(
+        _window_days(since, now), since, queries, keep
+    )
 
     # 같은 사건이면 직접링크를 남긴다. 그다음은 이른 기사.
     best: dict[str, dict] = {}
