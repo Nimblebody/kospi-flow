@@ -296,8 +296,11 @@ def _table(stocks: list[dict], groups: list[dict]) -> str:
 
 
 def _listing(articles: list[dict]) -> str:
+    """기사 한 줄씩. 여러 매체가 다룬 소식은 묶인 수를 붙인다 — 무게를 가늠하는 단서다."""
     return "\n".join(
-        f"{i}. [{a['time']}] ({a['source']}) {a['title']}" for i, a in enumerate(articles, 1)
+        f"{i}. [{a['time']}] ({a['source']}) {a['title']}"
+        + (f" (같은 소식 {a['dup']}건)" if a.get("dup", 1) > 1 else "")
+        for i, a in enumerate(articles, 1)
     )
 
 
@@ -319,8 +322,14 @@ def _evening_prompt(day, stocks, groups, articles) -> str:
         flow_task = "수급(외국인·기관 당일과 5일 누적)을 이유와 연결한다."
     else:
         flow_task = "오늘은 수급 숫자가 없다. 수급 이야기는 하지 않는다."
+    # 시각 규칙. 9/28 한화오션 수주 공시는 장 마감 뒤(첫 속보 16:36)였는데 제목·요약문·
+    # 본문 세 방식 모두 그날 주가의 이유로 엮었다. 본문을 읽혀도 안 고쳐져 규칙으로 막는다.
     return f"""{day} 한국 조선·조선기자재·해운·LNG 종목의 오늘 장을 정리한다.
 정규장은 15:30 에 끝났고 애프터마켓(16:00~20:00)까지 마친 뒤다.
+
+기사 앞의 [월-일 시:분] 은 기사가 나온 시각이다. 15:30 이후에 처음 나온 공시·수주 같은
+소식은 오늘 정규장 등락의 이유가 될 수 없다. 이런 소식은 애프터마켓 움직임이나 다음 거래일
+재료로만 다룬다. 며칠 전에 있었던 일(지난주 타결된 임단협 등)도 오늘 등락의 이유로 단정하지 않는다.
 
 묶음의 무게. 조선이 본류이고, 기자재는 조선 경기를 따라가는 부품주다.
 해운·LNG 는 곁가지다. LNG 묶음의 정유·가스·상사 종목(SK이노베이션·한국가스공사 등)은

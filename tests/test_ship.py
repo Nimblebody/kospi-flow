@@ -159,6 +159,22 @@ def test_evening_prompt_asks_for_flows_only_when_present():
     assert "오늘은 수급 숫자가 없다" in p2 and "5일 누적)을 이유와 연결한다" not in p2
 
 
+def test_listing_shows_how_many_outlets_ran_the_story():
+    arts = [{"time": "09-28 16:36", "source": "A", "title": "수주", "dup": 15},
+            {"time": "09-28 17:00", "source": "B", "title": "자사주", "dup": 1},
+            {"time": "09-28 17:10", "source": "C", "title": "옛 형식"}]
+    lines = S._listing(arts).splitlines()
+    assert lines[0].endswith("(같은 소식 15건)")
+    assert "같은 소식" not in lines[1] and "같은 소식" not in lines[2]
+
+
+def test_evening_prompt_says_after_close_news_is_not_todays_reason():
+    """장 마감 뒤 공시를 그날 주가의 이유로 엮는 실수(9/28, 세 방식 모두)를 규칙으로 막는다."""
+    rows = S.merge(_uni(), _q(), {})
+    p = S._evening_prompt("2026-09-28", rows, S.group_summary(rows), [])
+    assert "15:30 이후에 처음 나온" in p and "다음 거래일" in p
+
+
 # ------------------------------------------------------------ 근거 기사
 POOL = [{"title": f"기사{i}", "url": f"https://x/{i}"} for i in range(1, 11)]
 
