@@ -60,6 +60,8 @@ KIS_RATE_LIMIT_PER_SEC = 8 if KIS_ENV == "prod" else 1
 MASTER_URLS = {
     "kospi": "https://new.real.download.dws.co.kr/common/master/kospi_code.mst.zip",
     "theme": "https://new.real.download.dws.co.kr/common/master/theme_code.mst.zip",
+    # 조선 탭에서 코스닥 기자재주 이름을 찾으려고 쓴다
+    "kosdaq": "https://new.real.download.dws.co.kr/common/master/kosdaq_code.mst.zip",
 }
 MASTER_TTL_DAYS = 7  # 마스터 파일 재다운로드 주기
 

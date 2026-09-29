@@ -61,6 +61,27 @@ def load_stock_names() -> dict[str, str]:
     return names
 
 
+def load_kosdaq_names() -> dict[str, str]:
+    """{종목코드: 한글종목명} — 코스닥 종목 마스터.
+
+    코스피 마스터와 뒤쪽 고정폭 길이가 다르다(코스피 228자, 코스닥 222자).
+    KIS 공식 파서(stocks_info/kis_kosdaq_code_mst.py)와 같은 값을 쓴다.
+    """
+    dest = config.CACHE_DIR / "kosdaq_code.mst"
+    if not _download(config.MASTER_URLS["kosdaq"], dest):
+        return {}
+    names: dict[str, str] = {}
+    with dest.open(encoding="cp949", errors="replace") as f:
+        for row in f:
+            head = row[: len(row) - 222]
+            code = head[0:9].strip()
+            name = head[21:].strip()
+            if len(code) == 6 and name:
+                names[code] = name
+    log.info("코스닥 종목 마스터 %d 종목", len(names))
+    return names
+
+
 # 코스피 종목 마스터 뒤쪽 228자에 업종 코드가 들어 있다.
 # 오프셋은 추측하지 않고, 업종시세 API(inquire-index-category-price)가 주는
 # bstp_cls_code 와 가장 많이 일치하는 자리를 전수로 찾아서 확정했다.
