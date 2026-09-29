@@ -1,56 +1,84 @@
 // GitHub 예약이 못 미더워 대신 정시에 워크플로를 때리는 Cloudflare Worker
 //
 // 두 가지 입구가 있다.
-//   1) 크론      — 매 영업일 16:30 KST 에 스스로 발사
-//   2) HTTP GET  — 앱(PWA)의 '지금 갱신' 버튼이 부른다
+//   1) 크론      — 정해진 시각에 스스로 발사 (아래 CRON_JOBS)
+//   2) HTTP GET  — 손으로 부를 때 (?key=…&job=…)
 //
-// 둘 다 같은 함수를 타고, 그 안에서 '최근에 이미 돌았는지' 를 먼저 확인한다.
-// 저장소(KV)를 쓰지 않고 GitHub 실행 기록을 그대로 보기 때문에, 크론과 앱이
-// 같은 시각에 겹쳐도 두 번 돌지 않는다.
+// 둘 다 같은 함수를 타고, 그 안에서 '이미 끝났는지 · 지금 도는지' 를 먼저 확인한다.
+// 저장소(KV)를 쓰지 않고 GitHub 실행 기록과 커밋된 결과 파일을 그대로 본다.
 
 const REPO = "Nimblebody/kospi-flow";
 const REF = "main";
 
-// 크론마다 부르는 워크플로가 다르다. 목록에 없는 크론은 수급 리포트로 본다.
-//   30 16 * * *  = 01:30 KST  뉴스 요약 (전날 기사)
-//   그 밖        = 수급 리포트
-//
-// done 은 '오늘 몫이 이미 끝났나' 를 보는 파일이다. 뉴스는 전날치를 만들므로
-// 리포트와 기준 날짜가 하루 다르다.
+// done 은 '오늘 몫이 이미 끝났나' 를 볼 파일, doneDate 는 그 파일에서 날짜를 꺼내는
+// 방법이다. 뉴스는 전날치를 만들므로 기준 날짜(forDate)가 하루 다르다.
+// inputs 는 워크플로마다 받는 입력이 달라서 둔다. 없는 입력을 보내면 422 가 난다.
+const topDate = (json) => json.date;
+
 const JOBS = {
   news: {
     workflow: "news.yml",
     label: "뉴스",
     done: "web/data/news-latest.json",
+    doneDate: topDate,
     forDate: (kstNow) => new Date(kstNow.getTime() - 86400000),
+    inputs: ({ date }) => ({ date }),
   },
   report: {
     workflow: "daily.yml",
     label: "수급 리포트",
     done: "web/data/latest.json",
+    doneDate: topDate,
     forDate: (kstNow) => kstNow,
+    inputs: ({ stage, date }) => ({ stage, date }),
   },
   // 저녁에 같은 날짜를 다시 만들어 덮어쓴다. 이미 있어도 건너뛰지 않는다.
   // 16:30 값은 장 마감 직후라 뒤에 정정이 붙는다(실측 기관 기준 최대 18.9%).
-  // 애프터마켓(16:00~20:00)까지 끝난 뒤라 그날 아는 한 가장 확정에 가깝다.
-  //
-  // 실패한 날에는 이게 재시도 역할도 겸한다. 그래서 20:00 재시도를 따로 두지 않는다.
+  // 실패한 날에는 이게 재시도 역할도 겸한다.
   refresh: {
     workflow: "daily.yml",
     label: "수급 리포트 확정 갱신",
     done: "web/data/latest.json",
+    doneDate: topDate,
     forDate: (kstNow) => kstNow,
+    inputs: ({ stage, date }) => ({ stage, date }),
     ignoreDone: true,
+  },
+  // 조선 탭. 아침·저녁이 한 파일(ship.json)에 슬롯별로 들어간다.
+  ship_morning: {
+    workflow: "ship.yml",
+    label: "조선 아침",
+    done: "web/data/ship.json",
+    doneDate: (json) => json.morning && json.morning.date,
+    forDate: (kstNow) => kstNow,
+    inputs: () => ({ slot: "morning" }),
+  },
+  ship_evening: {
+    workflow: "ship.yml",
+    label: "조선 저녁",
+    done: "web/data/ship.json",
+    doneDate: (json) => json.evening && json.evening.date,
+    forDate: (kstNow) => kstNow,
+    inputs: () => ({ slot: "evening" }),
   },
 };
 
-const CRON_JOB = {
-  "30 16 * * *": "news",      // 01:30 KST
-  "30 11 * * *": "refresh",   // 20:30 KST
+// 크론 → 작업. Cloudflare 도 UTC 기준이다(대시보드의 'At 11:30 AM' 도 UTC).
+// 무료 플랜은 계정당 크론 5개라, 같은 시각 작업은 크론 하나에 묶는다.
+const CRON_JOBS = {
+  "30 7 * * *":  ["report"],                   // 16:30 KST  수급 리포트
+  "0 9 * * *":   ["report"],                   // 18:00 KST  실패했을 때 재시도
+  "30 11 * * *": ["refresh", "ship_evening"],  // 20:30 KST  확정 갱신 + 조선 저녁
+  "30 16 * * *": ["news"],                     // 01:30 KST  뉴스 (전날 기사)
+  "0 23 * * *":  ["ship_morning"],             // 08:00 KST  조선 아침
 };
 
-function jobFor(cron) {
-  return JOBS[CRON_JOB[cron] || "report"];
+// 목록에 없는 크론은 아무것도 부르지 않는다.
+// 예전엔 수급 리포트로 떨어졌다. 그래서 대시보드에 옛 크론(0 11 = 20:00)이 남고
+// 새 크론(30 11)이 빠져 있어도 '리포트 이미 있음, 건너뜀' 만 찍혀 멀쩡해 보였고,
+// 20:30 확정 갱신이 2주 동안 한 번도 안 돈 것을 몰랐다(2026-09-16 ~ 09-29).
+function jobsFor(cron) {
+  return (CRON_JOBS[cron] || []).map((name) => JOBS[name]);
 }
 
 // 연타 방지용 최소 간격. '이미 끝났나' 는 아래 alreadyDoneToday 가 따로 보므로
@@ -123,8 +151,7 @@ async function alreadyDone(job) {
       { headers: { "User-Agent": "kospi-flow-scheduler" }, cf: { cacheTtl: 0 } },
     );
     if (!res.ok) return { done: false, want };
-    const { date } = await res.json();
-    return { done: date === want, want };
+    return { done: job.doneDate(await res.json()) === want, want };
   } catch {
     // 확인 못 하면 막지 않는다. 못 도는 것보다 한 번 더 도는 편이 낫다.
     return { done: false, want };
@@ -149,8 +176,7 @@ async function trigger(env, { job = JOBS.report, stage = "final", date = "", for
     }
   }
 
-  // 뉴스 워크플로는 stage 입력을 받지 않는다. 없는 입력을 보내면 422 가 난다.
-  const inputs = job.workflow === "news.yml" ? { date } : { stage, date };
+  const inputs = job.inputs({ stage, date });
   const res = await gh(
     `/repos/${REPO}/actions/workflows/${job.workflow}/dispatches`,
     token,
@@ -171,11 +197,7 @@ async function trigger(env, { job = JOBS.report, stage = "final", date = "", for
 }
 
 export default {
-  // 크론. Cloudflare 도 UTC 기준이다.
-  //   30 7  * * *  = 16:30 KST  수급 리포트 본 실행
-  //   0  9  * * *  = 18:00 KST  실패했을 때 재시도
-  //   30 11 * * *  = 20:30 KST  확정 갱신 (이미 있어도 덮어쓴다)
-  //   30 16 * * *  = 01:30 KST  뉴스 요약 (전날 기사)
+  // 크론. 시각별 작업은 위 CRON_JOBS 에 있다.
   //
   // 요일 조건(1-5)을 일부러 넣지 않는다. 표기가 한 칸 밀리면 금요일을 통째로
   // 놓치는데, 그건 주말에 헛도는 것보다 훨씬 나쁘다. 휴장 판단은 KIS 의
@@ -184,12 +206,17 @@ export default {
   //
   // 재시도는 오늘 리포트가 없을 때만 실제로 돈다. 있으면 위에서 걸러진다.
   async scheduled(event, env, ctx) {
-    const job = jobFor(event.cron);
-    ctx.waitUntil(
+    const jobs = jobsFor(event.cron);
+    if (!jobs.length) {
+      // 대시보드에 등록했는데 여기 없는 크론. 조용히 넘기지 않고 로그에 남긴다.
+      console.warn(`cron ${event.cron}: 등록되지 않은 크론입니다. 아무것도 부르지 않습니다.`);
+      return;
+    }
+    ctx.waitUntil(Promise.all(jobs.map((job) =>
       trigger(env, { job }).then((r) =>
         console.log(`cron ${event.cron} (${job.label}):`, JSON.stringify(r)),
       ),
-    );
+    )));
   },
 
   async fetch(request, env) {
@@ -206,7 +233,7 @@ export default {
     // 상태 확인용. 토큰 없이도 살아있는지 볼 수 있다.
     if (url.pathname === "/health") {
       return Response.json(
-        { ok: true, repo: REPO, jobs: Object.keys(JOBS), crons: CRON_JOB },
+        { ok: true, repo: REPO, jobs: Object.keys(JOBS), crons: CRON_JOBS },
         { headers: head },
       );
     }
