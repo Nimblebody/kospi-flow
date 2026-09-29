@@ -174,6 +174,63 @@ def test_window_days_is_capped():
     assert len(N._window_days(since, now)) == 3
 
 
+
+# ------------------------------------------------------------ 같은 소식 묶기
+def _gather_with(titles):
+    """제목 목록을 피드에서 온 기사처럼 넣고 gather 결과를 돌려준다. 앞 제목일수록 이르다."""
+    from datetime import datetime
+    import config
+
+    base = datetime(2026, 9, 28, 16, 0, tzinfo=config.KST)
+    rows = [{"title": t, "source": "매체", "time": "", "at": base.replace(minute=i),
+             "url": f"https://example.com/{i}", "direct": True} for i, t in enumerate(titles)]
+    orig = N._from_feeds, N._from_google
+    N._from_feeds = lambda since, keep=None: [dict(r) for r in rows]
+    N._from_google = lambda days, since, queries=None, keep=None: []
+    try:
+        out, _ = N.gather(base.replace(hour=0), until=base.replace(hour=20))
+    finally:
+        N._from_feeds, N._from_google = orig
+    return out
+
+
+def test_rewritten_titles_of_one_story_become_one():
+    """같은 공시를 매체마다 제목을 바꿔 쓴다(9/28 실제 제목). 하나로 묶고 몇 건인지 센다."""
+    out = _gather_with([
+        "[속보] 한화오션, 6800억원 규모 LNG운반선 2척 수주…지난해 매출",
+        "한화오션, LNG운반선 2척 6800억원 수주...9월에만 2.9조원",
+        "한화오션, 아프리카 선주로부터 6800억원 규모 LNGC 2척 수주",
+        "한화오션, 336억원 규모 자사주 취득 나서…임직원 주식보상",
+    ])
+    assert len(out) == 2, [r["title"] for r in out]
+    lead = next(r for r in out if "LNG" in r["title"])
+    assert lead["dup"] == 3
+    assert lead["title"].startswith("[속보]")      # 가장 이른 기사가 대표
+    assert next(r for r in out if "자사주" in r["title"])["dup"] == 1
+
+
+def test_different_stories_with_shared_words_stay_apart():
+    """같은 날 상장한 다른 종목, 같은 회사의 다른 소식은 따로 둔다."""
+    out = _gather_with([
+        "[특징주] 빅웨이브로보틱스, 코스닥 상장 첫날 +182%대 급등",
+        "[특징주] 글로벌테크놀로지, 코스닥 상장 첫날 +144%대 급등",
+        "HD현대중공업, 안전 투자 위해 170억 추가 집행",
+        "HD현대중공업, 29일 임단협 교섭 재개",
+    ])
+    assert len(out) == 4, [r["title"] for r in out]
+
+
+def test_no_chaining_through_look_alikes():
+    """A~B, B~C 가 닮았어도 A 와 C 가 안 닮았으면 C 는 따로. 대표하고만 견준다."""
+    a = "코스피, 美국채금리 부담에 약보합세…등락 거듭"
+    b = "코스피, 美국채금리 부담에 약세…중국 증시 하락 출발"
+    c = "[올댓차이나] 중국 증시 하락 출발…상하이지수 0.2%↓"
+    ga, gb, gc = N._grams(a), N._grams(b), N._grams(c)
+    assert N._alike(ga, gb) and N._alike(gb, gc) and not N._alike(ga, gc)
+    out = _gather_with([a, b, c])
+    assert len(out) == 2
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

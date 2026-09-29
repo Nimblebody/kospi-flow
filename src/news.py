@@ -75,6 +75,25 @@ def _key(title: str) -> str:
     return re.sub(r"[^0-9A-Za-z가-힣]", "", _clean(title))[:40]
 
 
+ALIKE = 0.5   # 제목 두 글자 조각이 이만큼 겹치면 같은 소식으로 본다
+
+
+def _grams(title: str) -> set[str]:
+    """제목의 두 글자 조각. 머리말([속보]·[특징주] 등)은 뺀다."""
+    k = _key(re.sub(r"\[[^\]]*\]", "", title))
+    return {k[i:i + 2] for i in range(len(k) - 1)}
+
+
+def _alike(a: set[str], b: set[str]) -> bool:
+    """짧은 쪽 제목 조각의 절반 이상이 겹치면 같은 소식.
+
+    같은 공시를 매체마다 제목을 조금씩 바꿔 쓴다. 9/28 조선 기사 50건 중 23건이
+    한화오션 LNG선 수주 한 건이었는데, 제목이 달라 _key 로는 하나도 안 묶였다.
+    0.4 로 낮추면 같은 날 상장한 서로 다른 두 종목 기사가 한데 묶였다(뉴스 탭).
+    """
+    return bool(a and b) and len(a & b) / min(len(a), len(b)) >= ALIKE
+
+
 def _is_stock(title: str) -> bool:
     return any(h in title for h in STOCK_HINTS)
 
@@ -190,12 +209,21 @@ def gather(
     )
     rows = [r for r in rows if r["at"] <= now]
 
-    # 같은 사건이면 직접링크를 남긴다. 그다음은 이른 기사.
-    best: dict[str, dict] = {}
+    # 같은 소식이면 직접링크를 남긴다. 그다음은 이른 기사. dup = 묶인 기사 수.
+    # 대표 기사하고만 견준다. 닮은 기사끼리 이어 붙이면 '코스피 약세' 류가 사슬처럼
+    # 번져 뉴스 탭 기사 93건이 한 묶음이 됐다(2026-09-29 확인).
+    groups: list[tuple[set[str], dict]] = []
     for r in sorted(rows, key=lambda x: (not x["direct"], x["at"])):
-        best.setdefault(_key(r["title"]), r)
+        g = _grams(r["title"])
+        for lead_g, lead in groups:
+            if _alike(g, lead_g):
+                lead["dup"] += 1
+                break
+        else:
+            r["dup"] = 1
+            groups.append((g, r))
 
-    out = sorted(best.values(), key=lambda x: x["at"], reverse=True)
+    out = sorted((r for _, r in groups), key=lambda x: x["at"], reverse=True)
     log.info(
         "뉴스 %d건 수집 (직접링크 %d · 구글 %d)",
         len(out), sum(1 for r in out if r["direct"]), sum(1 for r in out if not r["direct"]),
