@@ -88,22 +88,56 @@ def _q():
 
 
 def test_merge_drops_stocks_without_quote():
-    rows = S.merge(_uni(), _q(), {}, {})
+    rows = S.merge(_uni(), _q(), {})
     assert [r["code"] for r in rows] == ["A", "B", "C"]
 
 
-def test_after_hours_change_is_vs_regular_close():
-    """애프터마켓 등락은 KIS 필드 대신 정규장 종가 대비로 직접 잰다."""
-    rows = S.merge(_uni(), _q(), {"A": {"price": 10500, "volume": 1, "amount_eok": 2.0}}, {})
+def _fl(close, chg, amount, **extra):
+    return {"close": close, "close_chg_pct": chg, "close_amount_eok": amount,
+            "close_volume": 1, "frgn_eok": 0.0, "orgn_eok": 0.0,
+            "frgn_5d_eok": 0.0, "orgn_5d_eok": 0.0, **extra}
+
+
+def test_evening_uses_official_close_not_live_price():
+    """20:30 의 현재가는 애프터마켓 마지막 가격일 수 있다. 종가·등락은 공식 종가로."""
+    q = _q()   # A 현재가 10000, 거래대금 500억
+    rows = S.merge(_uni(), q, {"A": _fl(9500, 2.5, 480.0)})
     a = next(r for r in rows if r["code"] == "A")
-    assert a["ah_price"] == 10500
-    assert a["ah_chg_pct"] == 5.0
-    assert "ah_chg_pct" not in next(r for r in rows if r["code"] == "B")
+    assert (a["price"], a["chg_pct"], a["amount_eok"]) == (9500, 2.5, 480.0)
+
+
+def test_after_hours_is_live_price_vs_official_close():
+    rows = S.merge(_uni(), _q(), {"A": _fl(9500, 2.5, 480.0)})
+    a = next(r for r in rows if r["code"] == "A")
+    assert a["ah_price"] == 10000
+    assert a["ah_chg_pct"] == round((10000 / 9500 - 1) * 100, 2)
+    assert a["ah_amount_eok"] == 20.0          # 현재가 쪽 500억 - 정규장 480억
+
+
+def test_no_after_hours_when_live_equals_close():
+    """현재가가 공식 종가와 같으면 애프터마켓 움직임을 만들지 않는다."""
+    rows = S.merge(_uni(), _q(), {"A": _fl(10000, 3.0, 500.0)})
+    a = next(r for r in rows if r["code"] == "A")
+    assert "ah_price" not in a and "ah_chg_pct" not in a
+
+
+def test_morning_keeps_live_quote_when_no_official_close():
+    """아침엔 수급(=공식 종가)을 안 받는다. 현재가 API 값을 그대로 쓴다."""
+    rows = S.merge(_uni(), _q(), {})
+    a = next(r for r in rows if r["code"] == "A")
+    assert (a["price"], a["chg_pct"]) == (10000, 3.0)
+    assert "ah_price" not in a
+
+
+def test_internal_close_fields_do_not_leak():
+    rows = S.merge(_uni(), _q(), {"A": _fl(9500, 2.5, 480.0)})
+    a = next(r for r in rows if r["code"] == "A")
+    assert not any(k.startswith("close") for k in a)
 
 
 def test_group_summary():
     fl = {"A": {"frgn_eok": 10.0, "orgn_eok": -3.0}, "B": {"frgn_eok": -4.0, "orgn_eok": 1.0}}
-    g = {x["name"]: x for x in S.group_summary(S.merge(_uni(), _q(), {}, fl))}
+    g = {x["name"]: x for x in S.group_summary(S.merge(_uni(), _q(), fl))}
     assert g["조선"]["count"] == 2
     assert g["조선"]["avg_chg_pct"] == 1.0
     assert (g["조선"]["up"], g["조선"]["down"]) == (1, 1)
@@ -115,9 +149,9 @@ def test_group_summary():
 
 def test_evening_prompt_asks_for_flows_only_when_present():
     """수급 숫자가 없는데 '수급을 이유와 연결하라' 고 시키면 모델이 '없다' 로 한 칸을 쓴다."""
-    with_fl = S.merge(_uni(), _q(), {}, {"A": {"frgn_eok": 1.0, "orgn_eok": 1.0,
-                                               "frgn_5d_eok": 1.0, "orgn_5d_eok": 1.0}})
-    no_fl = S.merge(_uni(), _q(), {}, {})
+    with_fl = S.merge(_uni(), _q(), {"A": {"frgn_eok": 1.0, "orgn_eok": 1.0,
+                                           "frgn_5d_eok": 1.0, "orgn_5d_eok": 1.0}})
+    no_fl = S.merge(_uni(), _q(), {})
     p1 = S._evening_prompt("2026-09-29", with_fl, S.group_summary(with_fl), [])
     p2 = S._evening_prompt("2026-09-29", no_fl, S.group_summary(no_fl), [])
     # 공통 규칙에도 '없으면 수급 이야기는 하지 않는다' 가 있어서, 할 일 문장으로 가른다

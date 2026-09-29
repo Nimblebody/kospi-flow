@@ -42,8 +42,12 @@ GROUPS = [
 # HLB 는 업종이 제약인 바이오 회사다. 옛 선박 사업 흔적으로 조선기자재에 남아 있는데,
 # 거래대금이 커서(2026-09-29 장중 2,518억) 기자재 묶음 합계를 부풀리고 모델이
 # '기자재 중 오른 종목' 으로 짚었다.
+# 업종이 어색한 종목은 사용자에게 물어 정했다(2026-09-29). 메디콕스는 이름과 달리
+# 선박 부품 제조사라 남긴다.
 EXCLUDE = {
     "028300": "HLB — 업종 제약",
+    "089230": "THE E&M — 업종 IT 서비스",
+    "099220": "SDN — 업종 유통",
 }
 
 QUERIES = [
@@ -134,37 +138,12 @@ def quotes(kis: KisClient, codes: list[str]) -> dict[str, dict]:
     return _parallel(one, codes)
 
 
-def after_hours(kis: KisClient, codes: list[str]) -> dict[str, dict]:
-    """시간외 현재가 API(FHPST02300000).
-
-    필드 이름은 폐지된 시간외 단일가용(ovtm_untp_*)이다. 2026-09-14 부터 생긴
-    애프터마켓(16:00~20:00 접속매매) 거래가 여기 들어오는지는 장 뒤에 실측해서
-    확인한다. 값이 0 이면 비운다.
-    """
-    def one(code: str):
-        try:
-            o = kis.get(
-                "/uapi/domestic-stock/v1/quotations/inquire-overtime-price", "FHPST02300000",
-                {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": code},
-            ).get("output") or {}
-        except Exception as exc:
-            log.debug("시간외 실패 %s: %s", code, exc)
-            return code, None
-        price = _num(o.get("ovtm_untp_prpr"))
-        if price <= 0:
-            return code, None
-        return code, {
-            "price": price,
-            "volume": _num(o.get("ovtm_untp_vol")),
-            "amount_eok": round(_num(o.get("ovtm_untp_tr_pbmn")) / 1e8, 1),
-        }
-
-    kis.token
-    return _parallel(one, codes)
-
-
 def flows(kis: KisClient, codes: list[str], date: str) -> dict[str, dict]:
-    """외국인·기관 당일 + 최근 5거래일 누적. 15:40 전에는 API 가 막혀 비어 온다."""
+    """외국인·기관 당일 + 최근 5거래일 누적, 그리고 그날 공식 종가.
+
+    오늘 날짜로 부르면 15:40 전에는 API 가 막혀 비어 온다(OPSQ2001).
+    종가를 여기서 가져오는 이유는 merge() 주석 참고.
+    """
     def one(code: str):
         try:
             rows = kis.investor_trade_by_stock_daily(code, date)
@@ -176,7 +155,12 @@ def flows(kis: KisClient, codes: list[str], date: str) -> dict[str, dict]:
             return code, None
         eok = lambda r, k: _num(r.get(k)) / 100   # 백만원 -> 억
         last5 = rows[:5]
+        today = rows[0]
         return code, {
+            "close": _num(today.get("stck_clpr")),
+            "close_chg_pct": _num(today.get("prdy_ctrt")),
+            "close_amount_eok": round(_num(today.get("acml_tr_pbmn")) / 1e8, 1),   # 원 -> 억
+            "close_volume": _num(today.get("acml_vol")),
             "frgn_eok": round(eok(rows[0], "frgn_ntby_tr_pbmn"), 1),
             "orgn_eok": round(eok(rows[0], "orgn_ntby_tr_pbmn"), 1),
             "frgn_5d_eok": round(sum(eok(r, "frgn_ntby_tr_pbmn") for r in last5), 1),
@@ -187,20 +171,39 @@ def flows(kis: KisClient, codes: list[str], date: str) -> dict[str, dict]:
     return _parallel(one, codes)
 
 
-def merge(uni: list[dict], q: dict, ah: dict, fl: dict) -> list[dict]:
-    """종목 표 한 벌. 시세가 없는 종목(거래정지 등)은 뺀다."""
+def merge(uni: list[dict], q: dict, fl: dict) -> list[dict]:
+    """종목 표 한 벌. 시세가 없는 종목(거래정지 등)은 뺀다.
+
+    애프터마켓을 잡는 방법. 시간외 현재가 API(FHPST02300000)와 날짜별 시간외 API
+    (FHPST02320000)는 폐지된 시간외 단일가 전용이다. 실측으로 한화오션의 시간외가는
+    9/11 까지 종가와 같은 값이 찍히다가 애프터마켓이 생긴 9/14 부터 매일 0 이다.
+
+    새 애프터마켓은 정규장처럼 접속매매라 일반 현재가 API 가 20:00 까지 움직일 수 있다.
+    그러면 20:30 에 읽는 현재가는 정규장 종가가 아니라 애프터마켓 마지막 가격이다.
+    그래서 종가·등락·거래대금은 일별 수급 API 의 공식 종가를 쓰고, 현재가가 그와
+    다르면 그 차이를 애프터마켓 등락으로 본다. 수급(=공식 종가)이 없으면(아침)
+    현재가 API 값을 그대로 쓴다.
+    """
     out = []
     for s in uni:
-        if s["code"] not in q:
+        code = s["code"]
+        if code not in q:
             continue
-        row = {**s, **q[s["code"]]}
-        a = ah.get(s["code"])
-        if a:
-            # 정규장 종가 대비. KIS 의 전일대비 필드는 무엇 대비인지 문서가 모호해서 직접 잰다.
-            row["ah_price"] = a["price"]
-            row["ah_chg_pct"] = round((a["price"] / row["price"] - 1) * 100, 2)
-            row["ah_amount_eok"] = a["amount_eok"]
-        row.update(fl.get(s["code"], {}))
+        row = {**s, **q[code]}
+        f = dict(fl.get(code) or {})
+        close = f.pop("close", 0)
+        if close > 0:
+            live, live_amount = row["price"], row["amount_eok"]
+            row["price"] = close
+            row["chg_pct"] = f.pop("close_chg_pct")
+            row["amount_eok"] = f.pop("close_amount_eok")
+            row["volume"] = f.pop("close_volume")
+            if live > 0 and live != close:
+                row["ah_price"] = live
+                row["ah_chg_pct"] = round((live / close - 1) * 100, 2)
+                if live_amount > row["amount_eok"]:
+                    row["ah_amount_eok"] = round(live_amount - row["amount_eok"], 1)
+        row.update(f)
         out.append(row)
     return out
 
@@ -416,11 +419,10 @@ def build(slot: str, last_evening: dict | None = None) -> dict | None:
 
     kis = KisClient()
     q = quotes(kis, codes)
-    ah = after_hours(kis, codes) if slot == "evening" else {}
     fl = flows(kis, codes, ymd) if slot == "evening" else {}
-    log.info("시세 %d · 애프터마켓 %d · 수급 %d", len(q), len(ah), len(fl))
-
-    stocks = merge(uni, q, ah, fl)
+    stocks = merge(uni, q, fl)
+    ah = sum(1 for x in stocks if "ah_price" in x)
+    log.info("시세 %d · 수급 %d · 애프터마켓이 움직인 종목 %d", len(q), len(fl), ah)
     if not stocks:
         log.error("조선 종목 시세를 하나도 못 받았습니다.")
         return None
@@ -450,7 +452,7 @@ def build(slot: str, last_evening: dict | None = None) -> dict | None:
         "window": window,
         "collected": len(articles),
         "pool": len(pool),
-        "has_after_hours": bool(ah),
+        "has_after_hours": ah > 0,
         "has_flows": bool(fl),
         "groups": groups,
         "stocks": stocks,
