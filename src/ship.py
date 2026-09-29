@@ -38,6 +38,14 @@ GROUPS = [
     ("LNG", "LNG"),
 ]
 
+# 테마 마스터에 들어 있지만 조선과 무관한 종목. 섞이면 묶음 합계가 틀어진다.
+# HLB 는 업종이 제약인 바이오 회사다. 옛 선박 사업 흔적으로 조선기자재에 남아 있는데,
+# 거래대금이 커서(2026-09-29 장중 2,518억) 기자재 묶음 합계를 부풀리고 모델이
+# '기자재 중 오른 종목' 으로 짚었다.
+EXCLUDE = {
+    "028300": "HLB — 업종 제약",
+}
+
 QUERIES = [
     "조선주", "조선업", "조선 수주", "조선기자재", "LNG선 발주",
     "HD현대중공업", "한화오션", "삼성중공업", "HD한국조선해양",
@@ -76,7 +84,7 @@ def universe() -> list[dict]:
     out: list[dict] = []
     for group, theme in GROUPS:
         for code in themes.get(theme, []):
-            if code in seen or code not in names:
+            if code in seen or code not in names or code in EXCLUDE:
                 continue
             seen.add(code)
             out.append({"code": code, "name": names[code], "group": group})
@@ -295,14 +303,25 @@ _RULES = """지켜야 할 것.
 - 숫자는 표나 기사 제목에 있는 것만 쓴다. 증권사 목표가처럼 제목에 적힌 숫자는 인용해도 되지만,
   어디에도 없는 숫자를 만들지 않는다.
 - 안전 캠페인·봉사·협약식 같은 회사 홍보성 기사는 근거로 고르지 않는다.
+- 같은 사건을 다룬 기사는 매체가 달라도 하나만 고른다.
+- 본문에 '기사 24' 처럼 기사 번호를 쓰지 않는다. 번호는 used 에만 적는다.
+- 표에 수급(외국인·기관) 숫자가 없으면 수급 이야기는 하지 않는다. 없다는 말로 한 칸을 쓰지 않는다.
 - 이유를 댈 때는 기사나 수급 숫자에 기대고, 근거가 없으면 '뚜렷한 재료는 보이지 않는다' 고 쓴다.
 - used 에는 근거로 쓴 기사 번호를 중요한 순으로 최대 {n}개. 번호는 1~{m} 사이 실제 번호.
 - 한국어로 쓰고 문장은 마침표로 끝낸다."""
 
 
 def _evening_prompt(day, stocks, groups, articles) -> str:
+    if any("frgn_eok" in s for s in stocks):
+        flow_task = "수급(외국인·기관 당일과 5일 누적)을 이유와 연결한다."
+    else:
+        flow_task = "오늘은 수급 숫자가 없다. 수급 이야기는 하지 않는다."
     return f"""{day} 한국 조선·조선기자재·해운·LNG 종목의 오늘 장을 정리한다.
 정규장은 15:30 에 끝났고 애프터마켓(16:00~20:00)까지 마친 뒤다.
+
+묶음의 무게. 조선이 본류이고, 기자재는 조선 경기를 따라가는 부품주다.
+해운·LNG 는 곁가지다. LNG 묶음의 정유·가스·상사 종목(SK이노베이션·한국가스공사 등)은
+유가·배터리·에너지 정책처럼 조선과 다른 이유로 움직이므로, 조선 전망에 억지로 엮지 않는다.
 
 [종목 표]
 {_table(stocks, groups)}
@@ -313,7 +332,7 @@ def _evening_prompt(day, stocks, groups, articles) -> str:
 할 일.
 1) headline — 오늘 조선주를 한 문장으로. 40자 안팎.
 2) points — 4~6개. 근황과 오르거나 내린 이유. 묶음(조선/기자재/해운/LNG) 사이
-   온도차가 있으면 짚는다. 수급(외국인·기관 당일과 5일 누적)을 이유와 연결한다.
+   온도차가 있으면 짚는다. {flow_task}
 3) call — 다음 거래일 조선 묶음의 방향.
    direction 은 상승/하락/보합 중 하나, confidence 는 높음/보통/낮음, reason 은 한두 문장.
    제목만 보고 내리는 판단이라 대개 '보통' 이나 '낮음' 이 맞다. '높음' 은 근거가 겹칠 때만.
@@ -333,6 +352,8 @@ def _morning_prompt(day, stocks, groups, articles, last_evening) -> str:
                 "요점:\n" + "\n".join(f"- {p}" for p in last_evening.get("points") or []))
     return f"""{day} 아침. 한국 조선·조선기자재·해운·LNG 종목을 장 시작 전에 정리한다.
 시세는 전일 종가 기준이다(아직 장이 안 열렸다).
+조선이 본류이고 기자재는 부품주, 해운·LNG 는 곁가지다. LNG 묶음의 정유·가스·상사 종목은
+조선과 다른 이유로 움직이므로 조선 이야기에 억지로 엮지 않는다.
 
 [전날 저녁 분석]
 {prev}

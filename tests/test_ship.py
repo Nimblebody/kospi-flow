@@ -56,6 +56,19 @@ def test_universe_dedupes_and_drops_delisted():
     ]
 
 
+def test_universe_drops_excluded_misfits():
+    """테마 마스터가 잘못 넣은 종목(HLB = 제약)은 뺀다."""
+    orig = (S.masters.load_themes, S.masters.load_stock_names, S.masters.load_kosdaq_names)
+    S.masters.load_themes = lambda: ({"조선기자재": ["017960", "028300"]}, "테스트")
+    S.masters.load_stock_names = lambda: {}
+    S.masters.load_kosdaq_names = lambda: {"017960": "한국카본", "028300": "HLB"}
+    try:
+        names = [u["name"] for u in S.universe()]
+    finally:
+        S.masters.load_themes, S.masters.load_stock_names, S.masters.load_kosdaq_names = orig
+    assert names == ["한국카본"]
+
+
 # ------------------------------------------------------------ 종목 표
 def _uni():
     return [
@@ -98,6 +111,18 @@ def test_group_summary():
     assert (g["조선"]["frgn_eok"], g["조선"]["orgn_eok"]) == (6.0, -2.0)
     assert "LNG" not in g                      # 시세 있는 종목이 없는 묶음은 안 나온다
     assert "frgn_eok" not in g["해운"]          # 수급을 못 받은 묶음은 합계를 안 만든다
+
+
+def test_evening_prompt_asks_for_flows_only_when_present():
+    """수급 숫자가 없는데 '수급을 이유와 연결하라' 고 시키면 모델이 '없다' 로 한 칸을 쓴다."""
+    with_fl = S.merge(_uni(), _q(), {}, {"A": {"frgn_eok": 1.0, "orgn_eok": 1.0,
+                                               "frgn_5d_eok": 1.0, "orgn_5d_eok": 1.0}})
+    no_fl = S.merge(_uni(), _q(), {}, {})
+    p1 = S._evening_prompt("2026-09-29", with_fl, S.group_summary(with_fl), [])
+    p2 = S._evening_prompt("2026-09-29", no_fl, S.group_summary(no_fl), [])
+    # 공통 규칙에도 '없으면 수급 이야기는 하지 않는다' 가 있어서, 할 일 문장으로 가른다
+    assert "5일 누적)을 이유와 연결한다" in p1 and "오늘은 수급 숫자가 없다" not in p1
+    assert "오늘은 수급 숫자가 없다" in p2 and "5일 누적)을 이유와 연결한다" not in p2
 
 
 # ------------------------------------------------------------ 근거 기사
