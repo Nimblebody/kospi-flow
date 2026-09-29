@@ -323,7 +323,9 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
     try:
         from src import explain as explainer
 
-        report["explain"] = explainer.explain(report, history)
+        # 같은 날 16:30 리포트가 있으면(20:30 확정 갱신) 수급이 크게 달라졌을 때만 다시 쓴다.
+        report["explain"] = explainer.explain(
+            report, history, prev=store.load_report(iso_date))
     except Exception as exc:
         log.warning("증시 해설 생성 실패(무시): %s", exc)
 

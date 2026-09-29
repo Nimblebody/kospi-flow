@@ -634,14 +634,80 @@ def _one(report: dict, history: list[dict], market: str) -> dict | None:
     return out
 
 
-def explain(report: dict, history: list[dict]) -> dict | None:
-    """한국·미국 각각 한 번씩. 실패한 쪽만 빠진다."""
+# ---------------------------------------------------------------- 20:30 확정 갱신
+# 20:30 에 같은 날 리포트를 다시 만들 때 해설 4개를 전부 다시 쓰면 해설 비용이 두 배다
+# (연 약 $28). 16:30 과 20:30 사이에 바뀌는 건 국내 수급뿐이다 — 지수는 15:30 에 끝났고
+# 미국장은 22:30 에 연다. 그래서 국내 수급이 크게 달라졌을 때만 국내 해설·업종 요약을
+# 다시 쓰고, 미국 쪽은 늘 16:30 것을 쓴다.
+# 16:30 값과 확정치의 차이는 대개 0.1~5%, 한 번 18.9%(9/10 기관)였다(context-notes 9/16).
+FLOW_REL = 0.10       # 외국인·기관 합계가 16:30 대비 10% 넘게, 그리고
+FLOW_ABS_EOK = 300    # 300억 넘게 바뀌면 '크게 달라졌다'
+
+
+def flow_shift(prev: dict, cur: dict) -> dict:
+    """16:30 리포트와 지금 리포트의 국내 수급 차이.
+
+    big 이 비어 있으면 해설을 바꿀 만한 변화가 아니다. 테마는 1위만 본다 — 상위 3개
+    구성으로 보면 9/28 처럼 3·4위가 47억 차이일 때 조금만 흔들려도 다시 쓰게 된다.
+    """
+    big, parts = [], []
+    pi, ci = prev.get("investors") or {}, cur.get("investors") or {}
+    for key, label in (("foreign_eok", "외국인"), ("institution_eok", "기관")):
+        a, b = pi.get(key) or 0.0, ci.get(key) or 0.0
+        parts.append(f"{label} {a:+,.0f}억 → {b:+,.0f}억")
+        flipped = a * b < 0 and max(abs(a), abs(b)) >= FLOW_ABS_EOK
+        if flipped or (abs(b - a) >= FLOW_ABS_EOK and abs(b - a) >= abs(a) * FLOW_REL):
+            big.append(f"{label} {a:+,.0f}억 → {b:+,.0f}억")
+    for key, label in (("themes_top", "자금 유입"), ("themes_bottom", "자금 이탈")):
+        p0 = ((prev.get(key) or [{}])[0]).get("name")
+        c0 = ((cur.get(key) or [{}])[0]).get("name")
+        if p0 and c0 and p0 != c0:
+            big.append(f"{label} 1위 테마 {p0} → {c0}")
+
+    # 화면에 보이는 테마(유입 5 · 이탈 3) 가운데 가장 많이 바뀐 것
+    old = {t["name"]: t.get("net_eok", 0) for t in prev.get("themes") or []}
+    shown = (cur.get("themes_top") or [])[:5] + (cur.get("themes_bottom") or [])[:3]
+    moved = max(((t["name"], t.get("net_eok", 0) - old[t["name"]]) for t in shown if t["name"] in old),
+                key=lambda x: abs(x[1]), default=None)
+    note = "20:30 확정치: " + ", ".join(parts)
+    if moved and abs(moved[1]) >= 1:
+        note += f". 가장 많이 바뀐 테마는 {moved[0]}({moved[1]:+,.0f}억)"
+    note += (". 수급이 크게 달라져 국내 해설을 다시 썼다." if big
+             else ". 해설을 바꿀 만한 변화는 없어 16:30 해설을 그대로 둔다.")
+    return {"big": big, "note": note}
+
+
+def explain(report: dict, history: list[dict], prev: dict | None = None) -> dict | None:
+    """한국·미국 각각 한 번씩. 실패한 쪽만 빠진다.
+
+    prev 는 같은 날 먼저 만든 확정 리포트(16:30). 있으면 그 해설을 되도록 다시 쓴다.
+    """
     if not config.ANTHROPIC_API_KEY:
         log.info("ANTHROPIC_API_KEY 가 없어 증시 해설을 건너뜁니다.")
         return None
 
+    reuse = None
+    if prev and prev.get("date") == report.get("date") and prev.get("stage") == "final":
+        reuse = prev.get("explain") or None
+    shift = flow_shift(prev, report) if reuse else None
+    redo_kr = reuse is None or bool(shift["big"])
+    if shift:
+        log.info("  %s", shift["note"])
+
+    def keep(part: str, market: str):
+        """다시 쓸 수 있는 16:30 조각. 국내는 수급이 크게 달라졌으면 버린다."""
+        if not reuse or (market == "kr" and redo_kr):
+            return None
+        return (reuse.get(part) or {}).get(market)
+
     out: dict = {"model": MODEL, "markets": {}}
     for market in ("kr", "us"):
+        old = keep("markets", market)
+        if old:
+            # 글은 그대로 두되 수급 σ 는 지금 수급으로 다시 잰다(화면 윗줄에 보인다).
+            out["markets"][market] = ({**old, "flow_z": flow_z(report, history)}
+                                      if market == "kr" else old)
+            continue
         try:
             got = _one(report, history, market)
         except Exception as exc:
@@ -653,6 +719,10 @@ def explain(report: dict, history: list[dict]) -> dict | None:
     # 업종·섹터 요약. 지수 해설이 이미 모아 둔 기사를 그대로 쓴다.
     out["sectors"] = {}
     for market in ("kr", "us"):
+        old = keep("sectors", market)
+        if old:
+            out["sectors"][market] = old
+            continue
         try:
             news = (out["markets"].get(market) or {}).get("sources") or []
             got = sectors(report, news, market)
@@ -663,4 +733,6 @@ def explain(report: dict, history: list[dict]) -> dict | None:
     if not out["sectors"]:
         out.pop("sectors")
 
+    if shift:
+        out["refresh"] = {"redone": redo_kr, "why": shift["big"], "note": shift["note"]}
     return out if out["markets"] else None
