@@ -616,6 +616,9 @@ footer { margin-top: 16px; font-size: calc(10.5px * var(--fs)); color: var(--ink
     if (ex.vkospi) basis += " · VKOSPI " + ex.vkospi.value + " " + esc(ex.vkospi_band || "");
     if (ex.flow_z != null) basis += " · 수급 " + ex.flow_z + "σ";
     h += '<p class="sub">' + basis + '</p>';
+    // 20:30 확정 갱신 결과. 수급이 조금만 바뀌었으면 16:30 해설을 그대로 두고 이 한 줄만 붙는다.
+    var rf = (d.explain || {}).refresh;
+    if (market === "kr" && rf && rf.note) h += '<p class="sub">' + esc(rf.note) + '</p>';
 
     if (ex.verdict) {
       h += '<p class="lead">' + esc(ex.verdict) + '</p>';
