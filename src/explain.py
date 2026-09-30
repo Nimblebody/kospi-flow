@@ -569,22 +569,43 @@ def _ask(prompt: str, schema: dict | None = None, effort: str | None = None) -> 
     output_config = {"format": {"type": "json_schema", "schema": schema or SCHEMA}}
     if effort:
         output_config["effort"] = effort
-    res = client.messages.create(
-        model=MODEL,
-        max_tokens=8000,
-        thinking={"type": "adaptive"},
-        messages=[{"role": "user", "content": prompt}],
-        output_config=output_config,
-    )
-    u = res.usage
-    log.info(
-        "  토큰 입력 %d · 출력 %d · 약 $%.4f",
-        u.input_tokens, u.output_tokens,
-        u.input_tokens / 1e6 * 2.0 + u.output_tokens / 1e6 * 10.0,   # Sonnet 5 단가
-    )
+    got = None
+    for attempt in (1, 2):
+        res = client.messages.create(
+            model=MODEL,
+            max_tokens=8000,
+            thinking={"type": "adaptive"},
+            messages=[{"role": "user", "content": prompt}],
+            output_config=output_config,
+        )
+        u = res.usage
+        log.info(
+            "  토큰 입력 %d · 출력 %d · 약 $%.4f",
+            u.input_tokens, u.output_tokens,
+            u.input_tokens / 1e6 * 2.0 + u.output_tokens / 1e6 * 10.0,   # Sonnet 5 단가
+        )
+        text = next((b.text for b in res.content if b.type == "text"), "")
+        got = json.loads(text) if text else None
+        odd = odd_syllables(json.dumps(got, ensure_ascii=False), prompt) if got else set()
+        if not odd:
+            break
+        if attempt == 1:
+            log.warning("  흔치 않은 글자(%s)가 나와 한 번 다시 받습니다.", "".join(sorted(odd)))
+        else:
+            log.warning("  다시 받아도 흔치 않은 글자(%s)가 남아 그대로 씁니다.", "".join(sorted(odd)))
+    return got
 
-    text = next((b.text for b in res.content if b.type == "text"), "")
-    return json.loads(text) if text else None
+
+# 모델이 가끔 한 글자를 거의 안 쓰는 글자로 튀긴다. 2026-09-29 조선 저녁 분석에서
+# '타결 쪽으로' 가 '타결 쪭으로' 로 나왔다. 일상 한글 2,350자(KS X 1001 완성형)에 없고
+# 프롬프트에도 없는 글자를 오타로 본다. 프롬프트에 있는 글자는 기사·종목 이름일 수 있어 봐준다.
+# (파이썬 euc-kr 인코더는 조합형 확장으로 모든 한글을 통과시켜 판별에 못 쓴다. 표를 직접 만든다.)
+_COMMON_HANGUL = frozenset(
+    bytes([hi, lo]).decode("euc-kr") for hi in range(0xB0, 0xC9) for lo in range(0xA1, 0xFF))
+
+
+def odd_syllables(text: str, prompt: str = "") -> set[str]:
+    return {c for c in text if "가" <= c <= "힣" and c not in _COMMON_HANGUL and c not in prompt}
 
 
 def _one(report: dict, history: list[dict], market: str) -> dict | None:

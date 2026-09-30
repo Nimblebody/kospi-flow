@@ -148,6 +148,74 @@ def test_sectors_ask_with_low_effort_and_clean_lines():
     assert all(r["line"] == "끌었다." for r in out["rows"])
 
 
+
+# ------------------------------------------------------------ 오타(흔치 않은 글자)
+def test_odd_syllables_catches_real_typo():
+    """2026-09-29 조선 저녁 분석에 실제로 나온 오타."""
+    assert E.odd_syllables("임단협 교섭이 순조롭게 타결 쪭으로 흐르면") == {"쪭"}
+    assert E.odd_syllables("임단협 교섭이 순조롭게 타결 쪽으로 흐르면") == set()
+
+
+def test_rare_syllable_in_the_prompt_is_allowed():
+    """기사 제목·종목 이름에 있는 드문 글자(똠얌 등)는 오타가 아니다."""
+    assert E.odd_syllables("똠얌 가게 매출", prompt="[기사] 똠얌 프랜차이즈") == set()
+    assert E.odd_syllables("똠얌 가게 매출") == {"똠"}
+
+
+class _Block:
+    type = "text"
+
+    def __init__(self, text):
+        self.text = text
+
+
+class _Res:
+    class usage:
+        input_tokens = 10
+        output_tokens = 5
+
+    def __init__(self, text):
+        self.content = [_Block(text)]
+
+
+def _ask_with(answers):
+    """anthropic 을 가짜로 바꿔 _ask 를 돌린다. 호출 횟수와 결과를 돌려준다."""
+    import types
+    calls = []
+
+    class _Messages:
+        def create(self, **kw):
+            calls.append(kw)
+            return _Res(answers[min(len(calls), len(answers)) - 1])
+
+    fake = types.SimpleNamespace(Anthropic=lambda: types.SimpleNamespace(messages=_Messages()))
+    orig = sys.modules.get("anthropic")
+    sys.modules["anthropic"] = fake
+    try:
+        return E._ask("프롬프트", {"type": "object"}), len(calls)
+    finally:
+        if orig is None:
+            sys.modules.pop("anthropic", None)
+        else:
+            sys.modules["anthropic"] = orig
+
+
+def test_typo_answer_is_asked_again_once():
+    got, n = _ask_with(['{"t": "타결 쪭으로"}', '{"t": "타결 쪽으로"}'])
+    assert n == 2 and got == {"t": "타결 쪽으로"}
+
+
+def test_clean_answer_is_not_asked_again():
+    got, n = _ask_with(['{"t": "타결 쪽으로"}'])
+    assert n == 1 and got == {"t": "타결 쪽으로"}
+
+
+def test_typo_twice_gives_up_and_keeps_the_answer():
+    """두 번째도 이상하면 더 부르지 않는다. 분석을 통째로 버리는 것보다 낫다."""
+    got, n = _ask_with(['{"t": "쪭"}', '{"t": "쪭"}'])
+    assert n == 2 and got == {"t": "쪭"}
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):
