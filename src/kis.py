@@ -122,16 +122,24 @@ class KisClient:
             return cached
 
         log.info("KIS 접근토큰 발급 중...")
-        res = self._session.post(
-            f"{self.base_url}/oauth2/tokenP",
-            json={
-                "grant_type": "client_credentials",
-                "appkey": self.app_key,
-                "appsecret": self.app_secret,
-            },
-            headers={"content-type": "application/json; charset=utf-8"},
-            timeout=20,
-        )
+        # 발급은 1분에 1회다. 넘으면 403 EGW00133. 20:30 에 확정 갱신과 조선 저녁이 연달아
+        # 도는데, 휴장일엔 앞 작업이 30초 만에 끝나 뒤 작업이 3초 만에 죽었다(2026-10-04·05).
+        for attempt in range(3):
+            res = self._session.post(
+                f"{self.base_url}/oauth2/tokenP",
+                json={
+                    "grant_type": "client_credentials",
+                    "appkey": self.app_key,
+                    "appsecret": self.app_secret,
+                },
+                headers={"content-type": "application/json; charset=utf-8"},
+                timeout=20,
+            )
+            if res.status_code == 403 and "EGW00133" in res.text and attempt < 2:
+                log.info("토큰 발급은 1분에 1회라 61초 기다렸다 다시 받습니다.")
+                time.sleep(61)
+                continue
+            break
         res.raise_for_status()
         body = res.json()
         if "access_token" not in body:
