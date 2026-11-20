@@ -53,7 +53,7 @@ def data_not_ready_yet(date: str, now: datetime | None = None) -> bool:
         return True
     if date < today:          # 지난 거래일인데 비었으면 그건 문제다
         return False
-    return (now.hour, now.minute) < config.DATA_READY_KST
+    return (now.hour, now.minute) < _late(config.DATA_READY_KST, date)
 
 
 def too_early_to_collect(date: str, now: datetime | None = None) -> bool:
@@ -68,7 +68,32 @@ def too_early_to_collect(date: str, now: datetime | None = None) -> bool:
         return True
     if date < today:          # 이미 끝난 장
         return False
-    return (now.hour, now.minute) < config.MARKET_CLOSE_KST
+    return (now.hour, now.minute) < _late(config.MARKET_CLOSE_KST, date)
+
+
+def _late(hm: tuple[int, int], date: str) -> tuple[int, int]:
+    """장이 늦게 끝나는 날(수능일)이면 그만큼 미룬 시각."""
+    return divmod(hm[0] * 60 + hm[1] + config.LATE_CLOSE_MIN.get(date, 0), 60)
+
+
+def late_close_reminder(now: datetime | None = None, days: dict | None = None) -> str | None:
+    """10/15 이 지났는데 그해 수능일(장 마감 지연일)이 config 에 없으면 알림 문구.
+
+    20시 뒤 실행(20:30 확정 갱신)에서만 돌려줘 하루 한 번만 나간다.
+    """
+    now = now or datetime.now(config.KST)
+    days = config.LATE_CLOSE_MIN if days is None else days
+    if (now.month, now.day) < config.LATE_CLOSE_REMIND_FROM:
+        return None
+    if (now.hour, now.minute) < config.LATE_CLOSE_REMIND_AFTER_KST:
+        return None
+    if any(d.startswith(str(now.year)) for d in days):
+        return None
+    return (
+        f"⚠️ {now.year}년 수능일이 config.LATE_CLOSE_MIN 에 없습니다.\n"
+        "수능일엔 코스피가 1시간 늦게(16:30) 끝나서, 넣지 않으면 그날 16:30 리포트가 "
+        "실패로 뜹니다. 날짜를 넣으면 이 알림은 멈춥니다."
+    )
 
 
 def backfill(end_date: str, days: int) -> None:
@@ -243,6 +268,13 @@ def run(stage: str, date: str, *, use_sample: bool, do_notify: bool) -> dict:
         theme_source += " (샘플 데이터)"
     else:
         from src.kis import KisClient
+
+        # 휴장일·실패와 무관하게 하루 한 번 나가도록 맨 앞에서 본다.
+        reminder = late_close_reminder()
+        if reminder:
+            log.warning(reminder)
+            if do_notify:
+                notify.send_text(reminder)
 
         kis = KisClient()
         if kis.is_holiday(date) is True:

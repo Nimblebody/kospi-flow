@@ -86,6 +86,39 @@ def test_two_gates_are_consistent():
                 assert main.data_not_ready_yet("20260828", now), f"{hh}:{mm}"
 
 
+def test_late_close_day_shifts_both_gates():
+    """2026-11-19 수능일. 장이 16:30 에 끝났는데 16:31 실행이 실패로 떴다."""
+    assert config.LATE_CLOSE_MIN.get("20261119") == 60
+    # 그날 16:31 은 '아직' 이다. 실패가 아니다.
+    assert main.data_not_ready_yet("20261119", at(2026, 11, 19, 16, 31)) is True
+    assert main.data_not_ready_yet("20261119", at(2026, 11, 19, 17, 9)) is True
+    assert main.data_not_ready_yet("20261119", at(2026, 11, 19, 17, 10)) is False
+    # 장중(16:29)엔 수집도 건너뛴다. 16:30 부터는 긁는다.
+    assert main.too_early_to_collect("20261119", at(2026, 11, 19, 16, 29)) is True
+    assert main.too_early_to_collect("20261119", at(2026, 11, 19, 16, 30)) is False
+    # 다음 날은 평소대로
+    hh, mm = config.DATA_READY_KST
+    assert main.data_not_ready_yet("20261120", at(2026, 11, 20, hh, mm)) is False
+
+
+def test_late_close_reminder_when_year_missing():
+    """10/15 이 지났는데 그해 수능일이 없으면 20시 이후 실행에서 한 번 알린다."""
+    days = {"20261119": 60}
+    # 2027년 날짜가 아직 없다
+    assert main.late_close_reminder(at(2027, 10, 15, 20, 31), days) is not None
+    assert main.late_close_reminder(at(2027, 11, 30, 20, 31), days) is not None
+    # 10/15 전에는 조용하다
+    assert main.late_close_reminder(at(2027, 10, 14, 20, 31), days) is None
+    # 하루 한 번 — 16:30 리포트와 18:00 재시도에서는 보내지 않는다
+    assert main.late_close_reminder(at(2027, 10, 20, 16, 31), days) is None
+    assert main.late_close_reminder(at(2027, 10, 20, 18, 1), days) is None
+    # 날짜를 넣으면 멈춘다
+    days["20271118"] = 60
+    assert main.late_close_reminder(at(2027, 10, 20, 20, 31), days) is None
+    # 올해(2026)는 이미 들어 있다
+    assert main.late_close_reminder(at(2026, 10, 20, 20, 31)) is None
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(globals().items()):

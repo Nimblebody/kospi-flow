@@ -201,11 +201,14 @@ def send_document(path, caption: str = "") -> bool:
 
 
 def send(report: dict) -> bool:
+    return send_text(build_message(report))
+
+
+def send_text(text: str) -> bool:
     """받는 사람이 여럿이면 각각 보낸다. 한 명이 실패해도 나머지는 간다."""
     if not _ready():
         return False
 
-    text = build_message(report)
     sent = 0
     for chat_id in config.TELEGRAM_CHAT_IDS:
         try:
