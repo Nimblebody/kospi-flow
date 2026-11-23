@@ -345,4 +345,6 @@ src/render.py 의 _png() 가 의존성 없이 그린 막대 두 개짜리 임시
 
 - [x] daily·news·ship·explain·pages 배포 단계에 30초 뒤 1회 재시도
       검증: 5개 YAML 파싱, 마지막 세 단계가 deploy → sleep 30 → deploy_retry
+- [x] deploy-pages v5 · upload-pages-artifact v5 로 올림
+      검증: 푸시로 도는 pages.yml 실행 성공
 - [ ] 다음 배포 실패 때 deploy_retry 가 실제로 통과하는지 확인

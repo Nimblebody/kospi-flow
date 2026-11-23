@@ -816,3 +816,7 @@ exit 1. 수능일 정규장은 10:00~16:30 이라 마감 1분 뒤였다. 코드�
   - 두 번째도 실패하면 job 은 빨간 X 그대로다. 조용히 넘어가지 않는다
   - environment url 은 둘 중 성공한 쪽의 page_url 을 쓴다
   - 실패 경로는 로컬에서 재현할 수 없어 YAML 파싱까지만 확인했다
+  - 같은 날 deploy-pages v4→v5, upload-pages-artifact v3→v5 로 올렸다. v5.0.1 에 배포 상태 조회
+    backoff·jitter 가 들어갔다(Timeout 쪽에 도움 기대, 아티팩트 0개 수정은 변경 내역에 없다).
+    v4 부터 점 파일이 빠지는데 web/.nojekyll 은 Actions 배포에선 안 쓰여 상관없다.
+    configure-pages 는 v6 이 나왔지만 이번엔 손대지 않았다
