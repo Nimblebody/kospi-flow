@@ -339,3 +339,10 @@ src/render.py 의 _png() 가 의존성 없이 그린 막대 두 개짜리 임시
 - [x] 10/15 이후 그해 날짜가 없으면 20:30 갱신 때 텔레그램 알림 (`notify.send_text`)
       검증: 단위 테스트 (10/14·16:31·18:01 조용, 날짜 넣으면 멈춤)
 - [ ] 18:00 재시도 크론이 11-19 에 돌지 않은 이유 확인 (Cloudflare Worker Logs)
+- [x] 18:00 재시도 크론 — 사용자가 Cloudflare 에서 고침. 11-21 부터 09:00 UTC 실행 확인
+
+## Pages 배포 재시도
+
+- [x] daily·news·ship·explain·pages 배포 단계에 30초 뒤 1회 재시도
+      검증: 5개 YAML 파싱, 마지막 세 단계가 deploy → sleep 30 → deploy_retry
+- [ ] 다음 배포 실패 때 deploy_retry 가 실제로 통과하는지 확인

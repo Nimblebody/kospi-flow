@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy_retry.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -122,5 +122,16 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web
+      # 배포는 GitHub 쪽에서 가끔 그냥 실패한다. 데이터 커밋은 이미 끝난 뒤라
+      # 사이트만 다음 배포까지 늦는다(새벽 뉴스면 08:00 까지). 실제로 본 것.
+      #   - 업로드 1초 뒤 조회했더니 아티팩트 0개 (09-08, 11-22)
+      #   - Timeout reached (10-15, 11-06) · 배포 생성 502 (11-20)
+      # 셋 다 잠시 뒤면 통과하는 종류라 30초 쉬고 한 번 더 한다. 두 번째도 실패면 빨간 X.
       - id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+      - if: steps.deploy.outcome == 'failure'
+        run: sleep 30
+      - id: deploy_retry
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4
